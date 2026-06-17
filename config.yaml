@@ -1,0 +1,65 @@
+paths:
+  data_dir: "data/mlcq"
+  processed_dir: "data/processed"
+  results_dir: "data/results"
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+dataset:
+  mlcq_csv: "data/mlcq/mlcq.csv"
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  random_seed: 42
+  use_synthetic: false        # set true if MLCQ CSV not available
+  n_synthetic: 4077
+
+smells:
+  classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
+  n_classes: 5
+
+patterns:
+  classes: ["Strategy", "Observer", "Facade", "Mediator", "ExtractClass", "None"]
+  n_classes: 6
+
+gcn:
+  node_feature_dim: 9
+  hidden_dim: 64
+  output_dim: 128
+  num_layers: 2
+  dropout: 0.1
+
+dqn:
+  upper_hidden: [64, 32]
+  lower_hidden: [64, 32]
+
+gcn_pretrain:
+  epochs: 50
+  learning_rate: 0.001
+  batch_size: 32
+  checkpoint_freq: 10
+
+training:
+  learning_rate: 0.001
+  batch_size: 64
+  replay_buffer_size: 10000
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay_steps: 5000
+  target_update_freq: 200
+  max_episodes: 500
+  warmup_steps: 200
+  gamma: 0.95
+  checkpoint_freq: 50
+  log_freq: 10
+  eval_freq: 50
+  freeze_gcn: false           # fine-tune GCN jointly during RL
+
+reward:
+  alpha: 0.4
+  beta: 0.3
+  gamma_r: 0.2
+  delta: 0.1
+  lambda_r: 0.05
+
+device: "auto"                # "auto" detects CUDA, else CPU
