@@ -13,6 +13,8 @@ venv/
 # Data (large files)
 data/mlcq/
 data/processed/
+data/processed_with_embeddings/
+data/results/
 
 # But keep results
 !data/results/

@@ -11,35 +11,41 @@ dataset:
   val_ratio: 0.15
   test_ratio: 0.15
   random_seed: 42
-  use_synthetic: false        # set true if MLCQ CSV not available
+  use_synthetic: false
   n_synthetic: 4077
 
 smells:
   classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
   n_classes: 5
 
-patterns:
-  classes: ["Strategy", "Observer", "Facade", "Mediator", "ExtractClass", "None"]
-  n_classes: 6
+semantic:
+  model_name: "microsoft/graphcodebert-base" #"./graphcodebert-base" 
+  embedding_dim: 768
+  max_length: 512
+  use_cache: true
+  cache_dir: "data/processed/embeddings_cache"
+
+graph:
+  node_types: ["class", "method", "field", "parameter"]
+  edge_types: ["CONTAINS", "CALLS", "USES", "INHERITS", "ACCESSES_FIELD"]
+
+ck_metrics:
+  features: ["wmc", "dit", "noc", "rfc", "cbo"]
+  n_features: 5
+
+data_usage:
+  features: ["n_field_accesses", "n_method_calls", "n_external_objects",
+             "field_access_ratio", "method_call_ratio", "data_usage_density"]
+  n_features: 6
 
 gcn:
-  node_feature_dim: 9
-  hidden_dim: 64
+  hidden_dim: 128
   output_dim: 128
   num_layers: 2
   dropout: 0.1
 
 dqn:
-  upper_hidden: [64, 32]
-  lower_hidden: [64, 32]
-
-gcn_pretrain:
-  epochs: 50
-  learning_rate: 0.001
-  batch_size: 32
-  checkpoint_freq: 10
-
-training:
+  hidden_layers: [128, 64]
   learning_rate: 0.001
   batch_size: 64
   replay_buffer_size: 10000
@@ -49,17 +55,39 @@ training:
   target_update_freq: 200
   max_episodes: 500
   warmup_steps: 200
-  gamma: 0.95
+  gamma: 0.0  # 0.0 because it's a single-step episodic task
+
+gcn_pretrain:
+  epochs: 50
+  learning_rate: 0.001
+  batch_size: 32
+  checkpoint_freq: 10
+
+experiments:
+  variants:
+    - name: "Experiment A"
+      description: "CK metrics + graph topology only"
+      use_ck: true
+      use_semantic: false
+      use_data_usage: false
+    - name: "Experiment B"
+      description: "CK metrics + semantic embeddings"
+      use_ck: true
+      use_semantic: true
+      use_data_usage: false
+    - name: "Experiment C"
+      description: "CK metrics + semantic + data usage"
+      use_ck: true
+      use_semantic: true
+      use_data_usage: true
+
+training:
   checkpoint_freq: 50
   log_freq: 10
   eval_freq: 50
-  freeze_gcn: false           # fine-tune GCN jointly during RL
 
 reward:
-  alpha: 0.4
-  beta: 0.3
-  gamma_r: 0.2
-  delta: 0.1
-  lambda_r: 0.05
+  correct_smell: 1.0
+  incorrect_smell: -0.5
 
-device: "auto"                # "auto" detects CUDA, else CPU
+device: "auto"
