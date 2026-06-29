@@ -53,8 +53,8 @@ dqn:
   epsilon_end: 0.05
   epsilon_decay_steps: 5000
   target_update_freq: 200
-  max_episodes: 500
-  warmup_steps: 200
+  max_episodes: 150 # 500
+  warmup_steps: 50  # 200
   gamma: 0.0  # 0.0 because it's a single-step episodic task
 
 gcn_pretrain:

@@ -11,10 +11,12 @@ env/
 venv/
 
 # Data (large files)
-data/mlcq/
-data/processed/
 data/processed_with_embeddings/
-data/results/
+data/processed_with_embeddings_500eps/
+data/processed_without_embeddings_150eps/
+data/processed_without_embeddings_500eps/
+data/processed_with_embeddings_150eps
+basepaper_agent/
 
 # But keep results
 !data/results/
