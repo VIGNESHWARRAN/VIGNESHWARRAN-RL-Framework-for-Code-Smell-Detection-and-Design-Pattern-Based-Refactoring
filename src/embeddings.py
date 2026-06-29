@@ -32,6 +32,16 @@ class SemanticEmbedder:
         os.makedirs(self.cache_dir, exist_ok=True)
         self.synthetic = SyntheticEmbedder(self.dim)
         
+        # ─── ABLATION TOGGLE OVERRIDE ───
+        # Force it to False to completely skip loading the heavy transformers model
+        USE_EMBEDDINGS_MODEL = True
+        
+        if not USE_EMBEDDINGS_MODEL:
+            logger.info("[Embeddings] Ablation active: Skipping GraphCodeBERT loading completely.")
+            self.has_transformers = False
+            return
+        # ────────────────────────────────
+        
         try:
             from transformers import AutoTokenizer, AutoModel
             model_name = cfg["semantic"]["model_name"]
@@ -43,7 +53,7 @@ class SemanticEmbedder:
         except ImportError:
             logger.warning("[Embeddings] transformers not found. Using synthetic embeddings globally.")
             self.has_transformers = False
-
+            
     def _get_cache_path(self, text: str) -> str:
         h = hashlib.md5(text.encode('utf-8')).hexdigest()
         return os.path.join(self.cache_dir, f"{h}.npy")
