@@ -143,9 +143,18 @@ class DQNTrainer:
         self.agent = agent
         self.cfg = cfg
         self.device = device
-        self.r_correct = cfg["reward"]["correct_smell"]
-        self.r_incorrect = cfg["reward"]["incorrect_smell"]
-        
+
+        r_cfg = cfg["reward"]
+        self.r_correct_smell = r_cfg["correct_smell"]
+        self.r_correct_nosmell = r_cfg["correct_nosmell"]
+        self.r_incorrect_smell = r_cfg["incorrect_smell"]
+        self.r_false_alarm = r_cfg["false_alarm"]
+        self.r_missed_smell = r_cfg["missed_smell"]
+
+        # Index of the "NoSmell" class, derived from config rather than hardcoded so this
+        # stays correct if the class list in config.yaml ever changes order.
+        self.nosmell_idx = cfg["smells"]["classes"].index("NoSmell")
+
         tcfg = cfg["dqn"]
         self.batch_sz = tcfg["batch_size"]
         self.warmup = tcfg["warmup_steps"]
@@ -167,6 +176,30 @@ class DQNTrainer:
     def _eps(self) -> float:
         frac = min(1.0, self.global_step / self.eps_decay)
         return self.eps_end + (self.eps_start - self.eps_end) * (1.0 - frac)
+
+    def _compute_reward(self, action: int, true_smell: int) -> float:
+        """Asymmetric reward, replacing the old flat +correct/-incorrect logic.
+
+        Distinguishes four outcome types instead of two, so the agent is pushed
+        harder toward catching rare smells without being punished as harshly for
+        the comparatively low-stakes mistake of flagging clean code:
+          - correct smell:      predicted a smell class, and it matches the true smell
+          - correct nosmell:    predicted NoSmell, and the true label is NoSmell
+          - false alarm:        predicted a smell, but the true label is NoSmell
+          - missed smell:       predicted NoSmell, but the true label is a real smell
+          - incorrect smell:    predicted a smell, true label is a *different* smell
+        """
+        is_action_nosmell = (action == self.nosmell_idx)
+        is_true_nosmell = (true_smell == self.nosmell_idx)
+
+        if action == true_smell:
+            return self.r_correct_nosmell if is_true_nosmell else self.r_correct_smell
+        if is_action_nosmell and not is_true_nosmell:
+            return self.r_missed_smell
+        if (not is_action_nosmell) and is_true_nosmell:
+            return self.r_false_alarm
+        # Both action and true label are (different) real smells
+        return self.r_incorrect_smell
 
     def train_step(self, batch: List[dict]) -> float:
         states = torch.cat([b["state"] for b in batch], dim=0)
@@ -199,7 +232,7 @@ class DQNTrainer:
                 true_smell = int(item["y"].item())
                 
                 action, state_vec = self.agent.select_action(item, self.epsilon)
-                reward = self.r_correct if action == true_smell else self.r_incorrect
+                reward = self._compute_reward(action, true_smell)
                 
                 ep_reward += reward
                 if action == true_smell: correct += 1

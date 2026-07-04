@@ -13,6 +13,11 @@ dataset:
   random_seed: 42
   use_synthetic: false
   n_synthetic: 4077
+  nosmell_ratio: 3.0  # NoSmell instances are downsampled to (nosmell_ratio * largest smell class
+                       # count) instead of a 1:1 match. 3.0 keeps clean code at ~3x the biggest
+                       # smell class, so the agent still sees enough clean code to avoid
+                       # over-flagging healthy code at test time. Set to 1.0 to restore the
+                       # old 1:1 behavior.
 
 smells:
   classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
@@ -45,16 +50,19 @@ gcn:
   dropout: 0.1
 
 dqn:
-  hidden_layers: [128, 64]
-  learning_rate: 0.001
-  batch_size: 64
-  replay_buffer_size: 10000
+  hidden_layers: [256, 128, 64]
+  learning_rate: 0.0005
+  batch_size: 128
+  replay_buffer_size: 50000
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay_steps: 5000
-  target_update_freq: 200
-  max_episodes: 150 # 500
-  warmup_steps: 50  # 200
+  epsilon_decay_steps: 150000   # global_step increments once per training instance per episode;
+                                 # set this to roughly (instances_per_episode * ~50) so epsilon
+                                 # decays over ~50 episodes instead of <1. Adjust once you know
+                                 # your actual train-set size (len(train_ds)).
+  target_update_freq: 1000
+  max_episodes: 200
+  warmup_steps: 100  # 200
   gamma: 0.0  # 0.0 because it's a single-step episodic task
 
 gcn_pretrain:
@@ -87,7 +95,10 @@ training:
   eval_freq: 50
 
 reward:
-  correct_smell: 1.0
-  incorrect_smell: -0.5
+  correct_smell: 2.0        # agent correctly identifies an actual smell (any of the 4 smell classes)
+  correct_nosmell: 0.2      # agent correctly identifies clean code
+  incorrect_smell: -1.0     # agent picks the wrong smell class (smell A mistaken for smell B)
+  false_alarm: -0.5         # agent flags clean code (NoSmell) as a smell
+  missed_smell: -1.0        # agent labels an actual smell as NoSmell
 
 device: "auto"

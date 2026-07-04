@@ -57,7 +57,7 @@ _SMELL_ALIASES = {
 def _normalize_smell(raw: str) -> Optional[str]:
     return _SMELL_ALIASES.get(str(raw).strip().lower())
 
-def load_mlcq(csv_path: str) -> pd.DataFrame:
+def load_mlcq(csv_path: str, nosmell_ratio: float = 1.0) -> pd.DataFrame:
     logger.info(f"[Data] Loading MLCQ CSV from {csv_path}")
     df = pd.read_csv(csv_path)
     df.columns = [c.lower().strip() for c in df.columns]
@@ -83,8 +83,13 @@ def load_mlcq(csv_path: str) -> pd.DataFrame:
 
     if not df_nosmells.empty and not df_smells.empty:
         max_smell_count = df_smells["smell_label"].value_counts().max()
-        if len(df_nosmells) > max_smell_count:
-            df_nosmells_downsampled = df_nosmells.sample(n=max_smell_count, random_state=42)
+        # Downsample NoSmell to (nosmell_ratio * largest smell class) rather than a strict 1:1
+        # match. A ratio of 1.0 reproduces the old behavior; >1.0 keeps more clean code so the
+        # agent isn't trained to expect a smell in every 5th file, which was causing it to
+        # over-flag healthy code at test time (hurting precision/F1).
+        target_nosmell_count = int(max_smell_count * nosmell_ratio)
+        if len(df_nosmells) > target_nosmell_count:
+            df_nosmells_downsampled = df_nosmells.sample(n=target_nosmell_count, random_state=42)
             df = pd.concat([df_smells, df_nosmells_downsampled]).sample(frac=1.0, random_state=42).reset_index(drop=True)
 
     ck_cols = ["wmc", "dit", "noc", "cbo", "rfc", "loc", "n_methods", "n_fields"]
@@ -268,7 +273,10 @@ def run_preprocessing(cfg: dict) -> Tuple["SmellDataset", "SmellDataset", "Smell
         logger.info("[Data] Processed .pt files found — loading cached graphs")
         return SmellDataset.load(train_path), SmellDataset.load(val_path), SmellDataset.load(test_path)
 
-    df = load_mlcq(cfg["dataset"]["mlcq_csv"])
+    df = load_mlcq(
+        cfg["dataset"]["mlcq_csv"],
+        nosmell_ratio=cfg["dataset"].get("nosmell_ratio", 1.0)
+    )
 
     # Initialize the embedder once so it loads the model into memory
     embedder = SemanticEmbedder(cfg)
