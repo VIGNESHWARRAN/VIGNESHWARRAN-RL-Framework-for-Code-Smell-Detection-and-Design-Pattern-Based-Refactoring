@@ -8,6 +8,11 @@ from typing import List, Union
 
 logger = logging.getLogger("SmellRL.embeddings")
 
+# ─── ABLATION TOGGLE OVERRIDE ───
+# Set to False to completely skip loading the heavy transformers model
+USE_EMBEDDINGS_MODEL = True
+# ────────────────────────────────
+
 class SyntheticEmbedder:
     """Generates deterministic 768-dim pseudo-embeddings via hashing."""
     def __init__(self, dim: int = 768):
@@ -32,15 +37,12 @@ class SemanticEmbedder:
         os.makedirs(self.cache_dir, exist_ok=True)
         self.synthetic = SyntheticEmbedder(self.dim)
         
-        # ─── ABLATION TOGGLE OVERRIDE ───
-        # Force it to False to completely skip loading the heavy transformers model
-        USE_EMBEDDINGS_MODEL = True
-        
+        # ─── ABLATION TOGGLE OVERRIDE CHECK ───
         if not USE_EMBEDDINGS_MODEL:
             logger.info("[Embeddings] Ablation active: Skipping GraphCodeBERT loading completely.")
             self.has_transformers = False
             return
-        # ────────────────────────────────
+        # ──────────────────────────────────────
         
         try:
             from transformers import AutoTokenizer, AutoModel

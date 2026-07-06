@@ -7,7 +7,6 @@ Stages:
   3. Serialize to torch_geometric Data objects
   4. Expose a PyTorch Dataset / DataLoader
 """
-
 import os
 import logging
 import math
@@ -229,20 +228,48 @@ class SmellDataset(Dataset):
         self._build_all_graphs()
 
     def _build_all_graphs(self):
-        logger.info(f"[Data] Building graphs for {len(self.df)} instances... (This may take a moment due to embeddings)")
-        n = len(self.df)
-        log_every = max(1, n // 10)
-        for i, row in self.df.iterrows():
-            graph = None
-            if "source_code" in self.df.columns and pd.notna(row.get("source_code")):
-                graph = _build_ast_graph(row, str(row["source_code"]), self.embedder)
-            if graph is None:
-                graph = _build_virtual_graph(row, self.embedder)
-            graph["idx"] = i
-            self._graphs.append(graph)
-            if (i + 1) % log_every == 0:
-                logger.debug(f"[Data]   Built {i+1}/{n} graphs")
-        logger.info(f"[Data] Graph construction complete.")
+            logger.info(f"[Data] Building graphs for {len(self.df)} instances...")
+            n = len(self.df)
+            log_every = max(1, n // 10)
+            virtual_count = 0
+            
+            # Track smell distribution for virtual fallbacks
+            virtual_smell_counts = {}
+            
+            # Ensure the graph list is fresh
+            self._graphs = [] 
+            
+            for i, row in self.df.iterrows():
+                graph = None
+                has_column = "source_code" in self.df.columns
+                has_content = has_column and pd.notna(row.get("source_code")) and str(row.get("source_code")).strip() != ""
+                
+                if has_content:
+                    graph = _build_ast_graph(row, str(row["source_code"]), self.embedder)
+                    if graph is None:
+                        logger.debug(f"[Data] Instance {i}: AST builder returned None (Parser failure)")
+                
+                # Fallback to virtual if no graph was built
+                if graph is None:
+                    virtual_count += 1
+                    smell = row.get("smell_label", "Unknown")
+                    virtual_smell_counts[smell] = virtual_smell_counts.get(smell, 0) + 1
+                    
+                    graph = _build_virtual_graph(row, self.embedder)
+                
+                # Explicitly append to the list at the end of every loop iteration
+                graph["idx"] = i
+                self._graphs.append(graph)
+                
+                if (i + 1) % log_every == 0:
+                    logger.info(f"[Data] Built {i+1}/{n} graphs...")
+
+            logger.info("--- Virtual Graph Smell Distribution ---")
+            for smell, count in virtual_smell_counts.items():
+                logger.info(f"{smell}: {count} instances")
+                
+            logger.info(f"Total virtual graphs: {virtual_count}")
+            logger.info(f"Successfully built {len(self._graphs)} graphs total.")
 
     def __len__(self): return len(self._graphs)
     def __getitem__(self, idx): return self._graphs[idx]

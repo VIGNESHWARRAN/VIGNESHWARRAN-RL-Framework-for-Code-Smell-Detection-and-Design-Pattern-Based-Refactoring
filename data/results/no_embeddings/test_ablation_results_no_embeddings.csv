@@ -1,0 +1,4 @@
+run_index,run_name,embeddings_enabled,elapsed_seconds,train_total_graphs,train_virtual_graphs,train_ast_graphs,test_total_graphs,test_virtual_graphs,test_ast_graphs,accuracy,macro_f1,macro_precision,macro_recall,final_training_loss,final_training_reward,total_episodes,hp_gcn_type,hp_dqn.max_episodes,hp_dqn.epsilon_decay_steps,hp_dqn.learning_rate,hp_dqn.warmup_steps,hp_dqn.batch_size,f1_GodClass,f1_FeatureEnvy,f1_LongMethod,f1_DataClass,f1_NoSmell
+1,test_full_gcn,False,91.49,4523,4523,0,970,970,0,0.5,0.3333,0.3333,0.3667,0.541837,-0.5312,2,full,2,10,0.0005,2,2,0.3333,0.0,0.0,0.0,0.6667
+2,test_no_gcn,False,42.05,4523,4523,0,970,970,0,0.125,0.0741,0.0417,0.3333,0.48969,-0.6562,2,no_gcn,2,10,0.0005,2,2,0.0,0.0,0.0,0.2222,0.0
+3,test_gcn_1layer,False,41.73,4523,4523,0,970,970,0,0.625,0.2564,0.2083,0.3333,0.323474,-0.5938,2,gcn_1layer,2,10,0.0005,2,2,0.0,0.0,0.0,0.0,0.7692
