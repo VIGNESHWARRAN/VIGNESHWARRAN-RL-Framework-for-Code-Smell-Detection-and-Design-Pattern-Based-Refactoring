@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SmellRL: Graph Encoder</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .btn {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background: #1a252f;
+        }
+
+        .diagram-container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+    <button class="btn" onclick="downloadDiagram('graph_encoder.png')">📥 Download High-Res PNG</button>
+    <br>
+    <div class="diagram-container">
+        <div class="mermaid">
+            graph LR
+            %% Styles
+            classDef input fill:#8e44ad,color:#fff,stroke:#9b59b6,stroke-width:3px;
+            classDef layer fill:#16a085,color:#fff,stroke:#1abc9c,stroke-width:2px;
+            classDef agg fill:#d35400,color:#fff,stroke:#e67e22,stroke-width:2px;
+            classDef state fill:#2980b9,color:#fff,stroke:#3498db,stroke-width:3px;
+
+            InGraph[(Heterogeneous Graph <br /> Structure + 768-d Vectors)]:::input --> GCN1[GCN Layer 1 <br /> Initial
+            Feature Extraction]:::layer
+            GCN1 --> Agg{Neighborhood Aggregation <br /> Message Passing}:::agg
+            Agg --> GCN2[GCN Layer 2 <br /> Deep Feature Fusion]:::layer
+            GCN2 --> Latent((Latent State S_t <br /> 128-d Vector)):::state
+        </div>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+    <script>
+        function downloadDiagram(filename) {
+            const svg = document.querySelector('.mermaid svg');
+            if (!svg) return alert('Rendering...');
+            const box = svg.getBoundingClientRect();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const scale = 3; canvas.width = box.width * scale; canvas.height = box.height * scale;
+            const clonedSvg = svg.cloneNode(true); clonedSvg.setAttribute('width', box.width); clonedSvg.setAttribute('height', box.height);
+            const img = new Image();
+            img.onload = function () {
+                ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+                const a = document.createElement('a'); a.download = filename; a.href = canvas.toDataURL('image/png'); a.click();
+            };
+            img.src = window.URL.createObjectURL(new Blob([(new XMLSerializer()).serializeToString(clonedSvg)], { type: 'image/svg+xml;charset=utf-8' }));
+        }
+    </script>
+</body>
+
+</html>

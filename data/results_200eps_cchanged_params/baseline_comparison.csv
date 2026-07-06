@@ -1,0 +1,5 @@
+Method,Accuracy,F1,Precision,Recall
+Random,0.1887,0.1655,0.1859,0.1823
+Rule-Based,0.3619,0.146,0.1242,0.1827
+SVM,0.4907,0.1317,0.0981,0.2
+SmellRL (Ours),0.4784,0.4242,0.4153,0.4727

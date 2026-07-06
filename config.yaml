@@ -56,7 +56,7 @@ dqn:
   replay_buffer_size: 50000
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay_steps: 150000   # global_step increments once per training instance per episode;
+  epsilon_decay_steps: 250000   # global_step increments once per training instance per episode;
                                  # set this to roughly (instances_per_episode * ~50) so epsilon
                                  # decays over ~50 episodes instead of <1. Adjust once you know
                                  # your actual train-set size (len(train_ds)).
@@ -96,9 +96,9 @@ training:
 
 reward:
   correct_smell: 2.0        # agent correctly identifies an actual smell (any of the 4 smell classes)
-  correct_nosmell: 0.2      # agent correctly identifies clean code
+  correct_nosmell: 0.5      # agent correctly identifies clean code
   incorrect_smell: -1.0     # agent picks the wrong smell class (smell A mistaken for smell B)
   false_alarm: -0.5         # agent flags clean code (NoSmell) as a smell
-  missed_smell: -1.0        # agent labels an actual smell as NoSmell
+  missed_smell: -2.0        # agent labels an actual smell as NoSmell
 
 device: "auto"

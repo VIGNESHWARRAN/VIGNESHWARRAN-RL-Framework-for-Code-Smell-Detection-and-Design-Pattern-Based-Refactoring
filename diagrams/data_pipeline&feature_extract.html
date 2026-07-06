@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SmellRL: Data Pipeline</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .btn {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: 0.3s;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background: #1a252f;
+        }
+
+        .diagram-container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+    <button class="btn" onclick="downloadDiagram('data_pipeline.png')">📥 Download High-Res PNG</button>
+    <br>
+    <div class="diagram-container">
+        <div class="mermaid" id="mermaid-diagram">
+            graph TD
+            %% Styles
+            classDef input fill:#34495e,color:#fff,stroke:#2c3e50,stroke-width:2px;
+            classDef process fill:#3498db,color:#fff,stroke:#2980b9,stroke-width:2px;
+            classDef decision fill:#f39c12,color:#fff,stroke:#e67e22,stroke-width:2px;
+            classDef semantic fill:#27ae60,color:#fff,stroke:#2ecc71,stroke-width:2px;
+            classDef fallback fill:#e74c3c,color:#fff,stroke:#c0392b,stroke-width:2px;
+            classDef output fill:#8e44ad,color:#fff,stroke:#9b59b6,stroke-width:3px;
+
+            Raw[/Raw Java Source File/]:::input --> Parser{javalang AST Builder}:::decision
+
+            Parser -->|Success ~90%| AST[Abstract Syntax Tree <br /> Nodes & Topological Edges]:::process
+            Parser -->|Failure ~10%| VirtGraph[Virtual Graph Generation]:::fallback
+
+            AST --> Embedder[Semantic Embedder <br /> GraphCodeBERT]:::semantic
+            VirtGraph --> CKM[CK Metrics Extractor <br /> WMC, DIT, NOC, CBO, etc.]:::fallback
+
+            Embedder -->|768-d Dense Vectors| HetGraph[(Heterogeneous Graph <br /> Structure + Semantics)]:::output
+            CKM -->|Numerical Node Features| HetGraph
+        </div>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+    </script>
+    <script>
+        function downloadDiagram(filename) {
+            const svg = document.querySelector('.mermaid svg');
+            if (!svg) return alert('Diagram is still rendering, please wait a second.');
+
+            // Get exact dimensions
+            const box = svg.getBoundingClientRect();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Scale by 3 for High Resolution (Journal Quality)
+            const scale = 3;
+            canvas.width = box.width * scale;
+            canvas.height = box.height * scale;
+
+            // Set up SVG string with explicit dimensions to prevent cropping issues
+            const clonedSvg = svg.cloneNode(true);
+            clonedSvg.setAttribute('width', box.width);
+            clonedSvg.setAttribute('height', box.height);
+            const data = (new XMLSerializer()).serializeToString(clonedSvg);
+            const DOMURL = window.URL || window.webkitURL || window;
+            const img = new Image();
+            const svgBlob = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
+            const url = DOMURL.createObjectURL(svgBlob);
+
+            img.onload = function () {
+                ctx.fillStyle = "white"; // Solid white background
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(scale, scale);
+                ctx.drawImage(img, 0, 0);
+                DOMURL.revokeObjectURL(url);
+
+                // Trigger Download
+                const a = document.createElement('a');
+                a.download = filename;
+                a.href = canvas.toDataURL('image/png');
+                a.click();
+            };
+            img.src = url;
+        }
+    </script>
+</body>
+
+</html>

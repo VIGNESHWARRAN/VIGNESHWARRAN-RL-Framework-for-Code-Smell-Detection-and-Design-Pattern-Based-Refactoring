@@ -16,6 +16,7 @@ data/processed_with_embeddings_500eps/
 data/processed_without_embeddings_150eps/
 data/processed_without_embeddings_500eps/
 data/processed_with_embeddings_150eps
+data/mlcq/mlcq.csv
 basepaper_agent/
 
 # But keep results

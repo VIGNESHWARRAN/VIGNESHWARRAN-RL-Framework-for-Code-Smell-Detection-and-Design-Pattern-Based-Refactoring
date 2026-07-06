@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SmellRL: Decision Agent</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .btn {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background: #1a252f;
+        }
+
+        .diagram-container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+    <button class="btn" onclick="downloadDiagram('rl_agent.png')">📥 Download High-Res PNG</button>
+    <br>
+    <div class="diagram-container">
+        <div class="mermaid">
+            graph TD
+            %% Styles
+            classDef state fill:#2980b9,color:#fff,stroke:#3498db,stroke-width:3px;
+            classDef net fill:#c0392b,color:#fff,stroke:#e74c3c,stroke-width:2px;
+            classDef action fill:#f1c40f,color:#333,stroke:#f39c12,stroke-width:2px;
+            classDef env fill:#27ae60,color:#fff,stroke:#2ecc71,stroke-width:2px;
+            classDef buffer fill:#34495e,color:#fff,stroke:#2c3e50,stroke-width:2px;
+
+            State((Input State S_t <br /> 128-d)):::state --> DQN[Primary DQN Classifier <br /> Weights: θ]:::net
+            DQN --> Policy{ε-Greedy Policy <br /> Exploration vs Exploitation}:::env
+
+            Policy --> ActSpace[Action Space: <br /> 1. GodClass <br /> 2. FeatureEnvy <br /> 3. LongMethod <br /> 4.
+            DataClass <br /> 5. NoSmell]:::action
+
+            ActSpace --> EnvFeedback[Environment Step <br /> Calculate Shaping Reward]:::env
+            EnvFeedback -->|Asymmetric Reward <br /> Hits: +2.0, Misses: -1.0/-2.0| Replay[(Replay Buffer <br /> 50k
+            Capacity)]:::buffer
+
+            Replay -->|Mini-batch Sample <br /> State, Action, Reward, NextState| DQN
+            DQN -.->|Synchronize weights <br /> Every 1,000 steps| TargetNet[Target Q-Network <br /> Weights: θ']:::net
+            TargetNet -.->|Provide Stable TD Targets| Replay
+        </div>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+    <script>
+        function downloadDiagram(filename) {
+            const svg = document.querySelector('.mermaid svg');
+            if (!svg) return alert('Rendering...');
+            const box = svg.getBoundingClientRect();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const scale = 3; canvas.width = box.width * scale; canvas.height = box.height * scale;
+            const clonedSvg = svg.cloneNode(true); clonedSvg.setAttribute('width', box.width); clonedSvg.setAttribute('height', box.height);
+            const img = new Image();
+            img.onload = function () {
+                ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+                const a = document.createElement('a'); a.download = filename; a.href = canvas.toDataURL('image/png'); a.click();
+            };
+            img.src = window.URL.createObjectURL(new Blob([(new XMLSerializer()).serializeToString(clonedSvg)], { type: 'image/svg+xml;charset=utf-8' }));
+        }
+    </script>
+</body>
+
+</html>

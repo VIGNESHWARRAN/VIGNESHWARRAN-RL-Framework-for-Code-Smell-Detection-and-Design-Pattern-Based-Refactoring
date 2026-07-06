@@ -1,0 +1,6 @@
+Smell Type,SmellRL F1,Rule-Based F1,Delta
+GodClass,0.4857,0.0,0.4857
+FeatureEnvy,0.1988,0.0,0.1988
+LongMethod,0.5118,0.0,0.5118
+DataClass,0.5131,0.1631,0.35
+NoSmell,0.5729,0.567,0.0059

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SmellRL: Complete Architecture</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .btn {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background: #1a252f;
+        }
+
+        .diagram-container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+    <button class="btn" onclick="downloadDiagram('complete_architecture.png')">📥 Download High-Res PNG</button>
+    <br>
+    <div class="diagram-container">
+        <div class="mermaid">
+            graph TD
+            %% Core Styles
+            classDef input fill:#34495e,color:#fff,stroke:#2c3e50,stroke-width:2px;
+            classDef semantic fill:#27ae60,color:#fff,stroke:#2ecc71,stroke-width:2px;
+            classDef graphStyle fill:#8e44ad,color:#fff,stroke:#9b59b6,stroke-width:2px;
+            classDef net fill:#c0392b,color:#fff,stroke:#e74c3c,stroke-width:2px;
+            classDef stateStyle fill:#2980b9,color:#fff,stroke:#3498db,stroke-width:3px;
+
+            subgraph Module1 ["1. Data Pipeline and Feature Extraction"]
+            Code[/"Raw Java Code"/]:::input --> AST{"AST Builder"}
+            AST -->|"Success"| BERT["GraphCodeBERT Embedding"]:::semantic
+            AST -->|"Failure"| CK["CK Metrics Fallback"]
+            BERT --> GraphData[("Heterogeneous Graph")]:::graphStyle
+            CK --> GraphData
+            end
+
+            subgraph Module2 ["2. Graph Encoder Layer"]
+            GraphData --> GCN["2-Layer GCN"]
+            GCN --> Agg["Neighborhood Aggregation"]
+            Agg --> StateNode(("State S_t <br /> 128-d Vector")):::stateStyle
+            end
+
+            subgraph Module3 ["3. RL Decision Agent"]
+            StateNode --> DQN["DQN Classifier"]:::net
+            DQN --> ActionSpace["Action: 5 Classes"]
+            ActionSpace --> Env["Environment"]
+            Env -->|"Asymmetric Reward Shaping"| Buffer[("Replay Buffer")]
+            Buffer -->|"Mini-batch Training"| DQN
+            DQN -.->|"Weight Synchronization"| Target["Target Network"]:::net
+            end
+
+            style Module1 fill:#f4f6f7,stroke:#bdc3c7,stroke-width:2px
+            style Module2 fill:#f4f6f7,stroke:#bdc3c7,stroke-width:2px
+            style Module3 fill:#f4f6f7,stroke:#bdc3c7,stroke-width:2px
+        </div>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+    <script>
+        function downloadDiagram(filename) {
+            const svg = document.querySelector('.mermaid svg');
+            if (!svg) return alert('Rendering...');
+            const box = svg.getBoundingClientRect();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const scale = 3; canvas.width = box.width * scale; canvas.height = box.height * scale;
+            const clonedSvg = svg.cloneNode(true);
+            clonedSvg.setAttribute('width', box.width);
+            clonedSvg.setAttribute('height', box.height);
+            if (!clonedSvg.getAttribute('xmlns')) clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+            const img = new Image();
+            img.onload = function () {
+                ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+                const a = document.createElement('a'); a.download = filename; a.href = canvas.toDataURL('image/png'); a.click();
+            };
+            img.src = window.URL.createObjectURL(new Blob([(new XMLSerializer()).serializeToString(clonedSvg)], { type: 'image/svg+xml;charset=utf-8' }));
+        }
+    </script>
+</body>
+
+</html>
