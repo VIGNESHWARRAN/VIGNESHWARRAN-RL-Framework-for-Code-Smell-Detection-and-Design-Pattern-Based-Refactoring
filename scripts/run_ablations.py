@@ -411,9 +411,9 @@ def main():
 
         # Slice datasets if test mode is active to speed up pre-training/training execution
         if args.test:
-            train_ds_wrapped._graphs = train_ds_wrapped._graphs[:16]
-            val_ds_wrapped._graphs = val_ds_wrapped._graphs[:8]
-            test_ds_wrapped._graphs = test_ds_wrapped._graphs[:8]
+            train_ds_wrapped.original_dataset._graphs = train_ds_wrapped.original_dataset._graphs[:16]
+            val_ds_wrapped.original_dataset._graphs = val_ds_wrapped.original_dataset._graphs[:8]
+            test_ds_wrapped.original_dataset._graphs = test_ds_wrapped.original_dataset._graphs[:8]
 
         # ─── Stage 2: GCN Pre-training ───
         gcn_type = run_cfg.get("gcn_type", "full")
@@ -553,9 +553,9 @@ def main():
 
         # Slice datasets if test mode is active to speed up pre-training/training execution
         if args.test:
-            train_ds_wrapped._graphs = train_ds_wrapped._graphs[:16]
-            val_ds_wrapped._graphs = val_ds_wrapped._graphs[:8]
-            test_ds_wrapped._graphs = test_ds_wrapped._graphs[:8]
+            train_ds_wrapped.original_dataset._graphs = train_ds_wrapped.original_dataset._graphs[:16]
+            val_ds_wrapped.original_dataset._graphs = val_ds_wrapped.original_dataset._graphs[:8]
+            test_ds_wrapped.original_dataset._graphs = test_ds_wrapped.original_dataset._graphs[:8]
 
         # ─── Stage 2: GCN Pre-training ───
         gcn_type = run_cfg.get("gcn_type", "full")
