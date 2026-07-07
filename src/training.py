@@ -164,14 +164,36 @@ class DQNTrainer:
         self.eps_decay = tcfg["epsilon_decay_steps"]
         self.max_eps = tcfg["max_episodes"]
         
+        self.eval_freq = cfg.get("training", {}).get("eval_freq", 10)
+        
         self.buffer = ReplayBuffer(tcfg["replay_buffer_size"])
+        
+        weight_decay = tcfg.get("weight_decay", 1e-5)
+        
         self.optimizer = torch.optim.Adam(
             list(agent.q.parameters()) + list(agent.gcn.parameters()), 
-            lr=tcfg["learning_rate"]
+            lr=tcfg["learning_rate"],
+            weight_decay=weight_decay
         )
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.max_eps)
+        
         self.global_step = 0
         self.epsilon = self.eps_start
         self.ckpt_mgr = CheckpointManager(cfg["paths"]["checkpoint_dir"], "smellrl", logger)
+        self.class_weights = {}
+
+    def _compute_class_weights(self, train_ds) -> dict:
+        counts = {}
+        for item in train_ds:
+            y = int(item["y"].item())
+            counts[y] = counts.get(y, 0) + 1
+            
+        n_classes = self.cfg["smells"]["n_classes"]
+        total = sum(counts.values())
+        weights = {cls_idx: total / (n_classes * count) if count > 0 else 1.0 
+                   for cls_idx, count in counts.items()}
+        logger.info(f"[Trainer] Computed class weights for reward scaling: {weights}")
+        return weights
 
     def _eps(self) -> float:
         frac = min(1.0, self.global_step / self.eps_decay)
@@ -193,13 +215,16 @@ class DQNTrainer:
         is_true_nosmell = (true_smell == self.nosmell_idx)
 
         if action == true_smell:
-            return self.r_correct_nosmell if is_true_nosmell else self.r_correct_smell
-        if is_action_nosmell and not is_true_nosmell:
-            return self.r_missed_smell
-        if (not is_action_nosmell) and is_true_nosmell:
-            return self.r_false_alarm
-        # Both action and true label are (different) real smells
-        return self.r_incorrect_smell
+            base_reward = self.r_correct_nosmell if is_true_nosmell else self.r_correct_smell
+        elif is_action_nosmell and not is_true_nosmell:
+            base_reward = self.r_missed_smell
+        elif (not is_action_nosmell) and is_true_nosmell:
+            base_reward = self.r_false_alarm
+        else:
+            # Both action and true label are (different) real smells
+            base_reward = self.r_incorrect_smell
+            
+        return base_reward * self.class_weights.get(true_smell, 1.0)
 
     def train_step(self, batch: List[dict]) -> float:
         states = torch.cat([b["state"] for b in batch], dim=0)
@@ -216,7 +241,9 @@ class DQNTrainer:
         self.optimizer.step()
         return loss.item()
 
-    def train(self, train_ds) -> List[dict]:
+    def train(self, train_ds, val_ds=None) -> List[dict]:
+        self.class_weights = self._compute_class_weights(train_ds)
+        
         indices = list(range(len(train_ds)))
         history = []
         
@@ -250,6 +277,8 @@ class DQNTrainer:
                 self.epsilon = self._eps()
                 self.global_step += 1
                 
+            self.scheduler.step()
+                
             stats = {
                 "episode": episode + 1,
                 "reward": ep_reward / len(indices),
@@ -257,6 +286,20 @@ class DQNTrainer:
                 "loss": ep_loss / max(1, n_updates),
                 "epsilon": self.epsilon
             }
+            
+            if val_ds is not None and (episode + 1) % self.eval_freq == 0:
+                self.agent.eval()
+                val_correct = 0
+                with torch.no_grad():
+                    for val_item in val_ds:
+                        val_action, _ = self.agent.select_action(val_item, epsilon=0.0)
+                        if val_action == int(val_item["y"].item()):
+                            val_correct += 1
+                val_acc = val_correct / max(1, len(val_ds))
+                stats["val_accuracy"] = val_acc
+                self.agent.train()
+                logger.info(f"[Trainer] Ep {episode+1:4d} | Val ACC: {val_acc:.4f}")
+            
             history.append(stats)
             
             if (episode + 1) % self.cfg["training"]["log_freq"] == 0:

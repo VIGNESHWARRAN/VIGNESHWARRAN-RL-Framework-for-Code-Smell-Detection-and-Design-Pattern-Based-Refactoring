@@ -431,12 +431,15 @@ def main():
         runner = ExperimentRunner(agent, train_ds_wrapped, test_ds_wrapped, run_cfg_dict, device)
         exp_results = runner.run_all(training_histories={"SmellRL": history})
 
-        # Retrieve SmellRL metrics
+        # Retrieve SmellRL metrics for test set (for reporting)
         report = exp_results["baselines"].get("SmellRL (Ours)", {})
         if not report:
             report = evaluate_agent(agent, test_ds_wrapped)
+            
+        # Evaluate on Validation set (for winner selection)
+        val_report = evaluate_agent(agent, val_ds_wrapped)
 
-        log.info(f"[Run Completed] Test Acc={report.get('accuracy', 0.0):.4f} | Macro F1={report.get('f1', 0.0):.4f} | Time={elapsed_time:.1f}s")
+        log.info(f"[Run Completed] Val F1={val_report.get('f1', 0.0):.4f} | Test Acc={report.get('accuracy', 0.0):.4f} | Test F1={report.get('f1', 0.0):.4f} | Time={elapsed_time:.1f}s")
 
         run_result = {
             "run_index": len(results) + 1,
@@ -471,10 +474,10 @@ def main():
         }
         results.append(run_result)
 
-        # Track Phase 1 Winner (based on Macro F1)
-        current_f1 = report.get("f1", 0.0)
-        if current_f1 > best_f1:
-            best_f1 = current_f1
+        # Track Phase 1 Winner (based on Validation Macro F1)
+        current_val_f1 = val_report.get("f1", 0.0)
+        if current_val_f1 > best_f1:
+            best_f1 = current_val_f1
             best_run_name = run_name
             best_run_cfg = copy.deepcopy(run_cfg)
 

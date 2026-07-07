@@ -27,8 +27,8 @@ logger = logging.getLogger("SmellRL.eval")
 # ──────────────────────────── Metric helpers ───────────────────────────────
 
 def classification_report_dict(y_true: List[int], y_pred: List[int], labels: List[str]) -> dict:
-    """Compute per-class + macro precision/recall/F1/accuracy without sklearn dependency."""
-    from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
+    """Compute per-class + macro precision/recall/F1/accuracy and confusion matrix."""
+    from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, confusion_matrix
     n = len(labels)
     report = {
         "accuracy":  float(accuracy_score(y_true, y_pred)),
@@ -37,6 +37,10 @@ def classification_report_dict(y_true: List[int], y_pred: List[int], labels: Lis
         "f1":        float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
         "per_class": {},
     }
+    
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(n)))
+    report["confusion_matrix"] = cm.tolist()
+    
     p = precision_score(y_true, y_pred, average=None, zero_division=0, labels=list(range(n)))
     r = recall_score(y_true, y_pred,    average=None, zero_division=0, labels=list(range(n)))
     f = f1_score(y_true, y_pred,        average=None, zero_division=0, labels=list(range(n)))
@@ -98,7 +102,9 @@ class SVMAgent:
 
     def _extract_features(self, item: dict) -> np.ndarray:
         x = item["x"][0].numpy()
-        return x[3:8] # Extract the core CK metrics (wmc, dit, noc, cbo, rfc)
+        # Extract the core CK metrics + loc: wmc, dit, noc, cbo, rfc, loc
+        # We assume they are at indices 3:9 after the 3 one-hot node-type indicators.
+        return x[3:9]
 
     def fit(self, train_ds: SmellDataset):
         X = np.stack([self._extract_features(item) for item in train_ds])
@@ -168,6 +174,13 @@ class ExperimentRunner:
                 "Recall": round(rep["recall"], 4)
             })
             self.log.info(f"[Eval] {name:15s} | Acc={rep['accuracy']:.4f} | F1={rep['f1']:.4f}")
+            
+            if name == "SmellRL (Ours)":
+                cm = rep["confusion_matrix"]
+                df_cm = pd.DataFrame(cm, index=SMELL_CLASSES, columns=SMELL_CLASSES)
+                cm_path = os.path.join(self.results_dir, "confusion_matrix.csv")
+                df_cm.to_csv(cm_path)
+                self.log.info(f"[Eval] Saved SmellRL confusion matrix to {cm_path}")
 
         pd.DataFrame(rows).to_csv(os.path.join(self.results_dir, "baseline_comparison.csv"), index=False)
         return results

@@ -48,11 +48,16 @@ gcn:
   output_dim: 128
   num_layers: 2
   dropout: 0.1
+  use_attention_pool: true
+  use_residual: true
+  use_layernorm: true
 
 dqn:
   hidden_layers: [256, 128, 64]
   learning_rate: 0.0005
   batch_size: 128
+  weight_decay: 0.00001
+  dqn_dropout: 0.2
   replay_buffer_size: 50000
   epsilon_start: 1.0
   epsilon_end: 0.05
@@ -102,3 +107,7 @@ reward:
   missed_smell: -2.0        # agent labels an actual smell as NoSmell
 
 device: "auto"
+
+class_weights:
+  enabled: true
+  method: "inverse_frequency"  # scale rewards by inverse class frequency
