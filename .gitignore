@@ -11,6 +11,7 @@ env/
 venv/
 
 # Data (large files)
+data
 data/processed_with_embeddings/
 data/processed_with_embeddings_500eps/
 data/processed_without_embeddings_150eps/
@@ -22,7 +23,7 @@ basepaper_agent/
 data/results
 
 # But keep results
-!data/results/
+data/results/
 
 # Checkpoints (large model files)
 checkpoints/
