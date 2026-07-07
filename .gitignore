@@ -16,7 +16,7 @@ data/processed_with_embeddings_500eps/
 data/processed_without_embeddings_150eps/
 data/processed_without_embeddings_500eps/
 data/processed_with_embeddings_150eps
-data/mlcq/mlcq.csv
+data/mlcq/
 data/processed
 basepaper_agent/
 data/results
