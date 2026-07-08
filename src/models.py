@@ -35,23 +35,87 @@ class AttentionPooling(nn.Module):
         weights = weights / (weights.sum() + 1e-9)
         return (weights * h).sum(dim=0, keepdim=True)
 
+# ──────────────────────────── Node Feature Fusion ─────────────────────────
+
+class NodeFeatureFusion(nn.Module):
+    """
+    Fuses structural (15 dims) and semantic (768 dims) node features into a
+    balanced 128-dim representation, giving structural features 3× more
+    representational capacity than semantic embeddings (96 vs 32 dims).
+
+    Without this, the raw concatenated vector [15 | 768] = 783 dims causes
+    the GCN's first linear layer to receive 98.1% semantic signal, effectively
+    drowning out the hand-crafted CK and data-usage features.
+
+    Structural branch  (15 → 96):  2-layer MLP with ReLU — learns non-linear
+        interactions across node-type, CK metrics, and data-usage features.
+    Semantic branch   (768 → 32):  Single linear projection + LayerNorm —
+        compresses GraphCodeBERT's redundant high-dim space to a compact slot.
+    Output: cat([struct_out, sem_out]) = 128 dims per node.
+    """
+    STRUCT_DIM = 15    # 3 node-type + 6 CK + 6 data-usage
+    SEM_DIM    = 768   # GraphCodeBERT CLS embedding
+    STRUCT_OUT = 96    # 3× semantic — structure gets priority
+    SEM_OUT    = 32    # compressed semantic
+    FUSED_DIM  = 128   # STRUCT_OUT + SEM_OUT (must equal gcn.hidden_dim)
+
+    def __init__(self, dropout: float = 0.1):
+        super().__init__()
+        # Structural: 2-layer MLP to learn non-linear feature interactions
+        self.struct_proj = nn.Sequential(
+            nn.Linear(self.STRUCT_DIM, 48),
+            nn.ReLU(),
+            nn.Linear(48, self.STRUCT_OUT),
+            nn.LayerNorm(self.STRUCT_OUT),
+        )
+        # Semantic: single linear compression; semantics already pre-trained
+        self.sem_proj = nn.Sequential(
+            nn.Linear(self.SEM_DIM, self.SEM_OUT),
+            nn.LayerNorm(self.SEM_OUT),
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [N, 783] — structural in [:15], semantic in [15:783]
+        # For semantic ablation, AblatedDataset zeroes x[:, 15:] before calling
+        # forward, so sem_proj(zeros) ≈ bias-only → near-zero semantic output.
+        if x.shape[1] < self.STRUCT_DIM + self.SEM_DIM:
+            raise ValueError(
+                f"NodeFeatureFusion expects input width ≥ "
+                f"{self.STRUCT_DIM + self.SEM_DIM} (got {x.shape[1]}). "
+                "For semantic ablation zero out dims "
+                f"[{self.STRUCT_DIM}:] via AblatedDataset — do not slice."
+            )
+        struct = x[:, :self.STRUCT_DIM]                             # [N, 15]
+        sem    = x[:, self.STRUCT_DIM:self.STRUCT_DIM + self.SEM_DIM]  # [N, 768]
+        struct_out = self.struct_proj(struct)            # [N, 96]
+        sem_out    = self.sem_proj(sem)                  # [N, 32]
+        fused = torch.cat([struct_out, sem_out], dim=-1) # [N, 128]
+        return self.dropout(fused)
+
+
 class GCNEncoder(nn.Module):
     def __init__(self, in_ch: int, hidden: int = 128, out_ch: int = 128, dropout: float = 0.1):
         super().__init__()
-        self.conv1 = GCNLayer(in_ch, hidden)
+        # in_ch is accepted for API compatibility but NodeFeatureFusion handles
+        # the actual input projection; GCN layers always operate on FUSED_DIM.
+        self.fusion = NodeFeatureFusion(dropout=dropout)
+        fused_dim = NodeFeatureFusion.FUSED_DIM  # 128
+        self.conv1 = GCNLayer(fused_dim, hidden)
         self.norm1 = nn.LayerNorm(hidden)
         self.conv2 = GCNLayer(hidden, out_ch)
         self.norm2 = nn.LayerNorm(out_ch)
-        self.skip_proj = nn.Linear(in_ch, out_ch)
+        self.skip_proj = nn.Linear(fused_dim, out_ch)
         self.dropout = nn.Dropout(dropout)
         self.pool = AttentionPooling(out_ch)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        x = self.fusion(x)              # [N, raw_dim] → [N, 128] balanced representation
         h = self.conv1(x, edge_index)
         h = self.norm1(h)
         h = self.dropout(h)
         h2 = self.conv2(h, edge_index)
-        h2 = h2 + self.skip_proj(x)
+        h2 = h2 + self.skip_proj(x)    # skip_proj: Linear(128 → out_ch)
         h2 = self.norm2(h2)
         return self.pool(h2)
 

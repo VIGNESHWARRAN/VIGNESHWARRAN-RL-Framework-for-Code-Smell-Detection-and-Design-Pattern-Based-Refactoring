@@ -67,17 +67,19 @@ class RuleBasedAgent:
     name = "Rule-Based (Designite-like)"
 
     def predict(self, item: dict) -> int:
-        x = item["x"]  # [N, Node_Feature_Dim]
-        cf = x[0].tolist()  # class node features
-        
-        # reverse normalise (rough approximation)
+        x = item["x"]  # [N, 783] raw node feature tensor
+        cf = x[0].tolist()  # class node (index 0): 783-dim feature vector
+
+        # Reverse-normalise CK metrics from the class node (indices 3-8)
         wmc = cf[3] * 150.0
         cbo = cf[6] * 40.0
         rfc = cf[7] * 200.0
-        loc = cf[8] * 3000.0 if len(cf) > 8 else 0  # Support dropping LOC
-        n_m = max(1, (x.size(0) - 1) // 2)
-        n_f = max(0, (x.size(0) - 1) // 2)
-        avg_cc = wmc / max(1, n_m)
+        loc = cf[8] * 3000.0
+        # Correct method/field counts from the node-type one-hot flags:
+        # x[:, 1] = is_method, x[:, 2] = is_field across all N nodes
+        n_m = max(1, int(x[:, 1].sum().item()))
+        n_f = max(0, int(x[:, 2].sum().item()))
+        avg_cc = wmc / n_m
 
         if wmc > 47 or loc > 1000:
             return SMELL_TO_IDX["GodClass"]

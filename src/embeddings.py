@@ -44,17 +44,17 @@ class SemanticEmbedder:
             return
         # ──────────────────────────────────────
         
-        try:
-            from transformers import AutoTokenizer, AutoModel
-            model_name = cfg["semantic"]["model_name"]
-            logger.info(f"[Embeddings] Loading {model_name}...")
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name).to(self.device)
-            self.model.eval()
-            self.has_transformers = True
-        except ImportError:
-            logger.warning("[Embeddings] transformers not found. Using synthetic embeddings globally.")
-            self.has_transformers = False
+        # If USE_EMBEDDINGS_MODEL=True, transformers MUST be available.
+        # We intentionally do NOT catch ImportError here — a missing transformers
+        # install should fail loudly rather than silently fall back to synthetic
+        # embeddings and produce misleading results.
+        from transformers import AutoTokenizer, AutoModel
+        model_name = cfg["semantic"]["model_name"]
+        logger.info(f"[Embeddings] Loading {model_name}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        self.model.eval()
+        self.has_transformers = True
             
     def _get_cache_path(self, text: str) -> str:
         h = hashlib.md5(text.encode('utf-8')).hexdigest()
@@ -70,6 +70,7 @@ class SemanticEmbedder:
             return np.load(cache_path)
 
         if not self.has_transformers:
+            # Reached only when USE_EMBEDDINGS_MODEL=False (explicit ablation).
             emb = self.synthetic.embed(text)
         else:
             inputs = self.tokenizer(text, return_tensors="pt", max_length=self.max_length, truncation=True)

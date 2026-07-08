@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.utils      import setup_logger, get_device, CheckpointManager
 from src.data       import run_preprocessing, SmellDataset, SMELL_CLASSES
-from src.models     import SmellDetectionAgent, GCNEncoder, GCNLayer
+from src.models     import SmellDetectionAgent, GCNEncoder, GCNLayer, NodeFeatureFusion
 from src.training   import DQNTrainer, GCNPretrainer
 from src.evaluation import classification_report_dict, ExperimentRunner
 from src.embeddings import USE_EMBEDDINGS_MODEL
@@ -55,9 +55,13 @@ class AblatedDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         item = copy.copy(self.original_dataset[idx])
         if not self.use_semantic:
-            # Drop the semantic embeddings (keep only the first 9 features:
-            # node type (3 dims) + normalized CK metrics/LOC (6 dims))
-            item["x"] = item["x"][:, :9]
+            # Zero out the semantic embedding dims (indices 15:783) instead of
+            # slicing. NodeFeatureFusion always expects the full input shape;
+            # sem_proj(all-zeros) ≈ bias-only → near-zero semantic contribution,
+            # cleanly disabling the semantic branch without a shape mismatch.
+            item = dict(item)          # shallow dict copy to avoid mutating cache
+            item["x"] = item["x"].clone()
+            item["x"][:, NodeFeatureFusion.STRUCT_DIM:] = 0.0
         return item
 
 
@@ -130,8 +134,9 @@ class IdentityGCN(GCNEncoder):
         super().__init__(in_ch, hidden, out_ch, dropout)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        x = self.fusion(x)              # [N, raw_dim] → [N, 128] via NodeFeatureFusion
         # Only use the class node (index 0) — no message passing
-        h = x[0:1]                      # Shape: [1, in_ch]
+        h = x[0:1]                      # Shape: [1, 128]
         h = F.relu(self.conv1.linear(h))
         h = self.conv2.linear(h)
         return h                        # Shape: [1, out_ch]
@@ -143,11 +148,13 @@ class OneLayerGCN(GCNEncoder):
     """A GCN encoder with only 1 layer of message passing."""
     def __init__(self, in_ch: int, out_ch: int = 128, dropout: float = 0.1):
         super().__init__(in_ch, out_ch, out_ch, dropout)
-        # Re-define structure to use a single layer directly
-        self.conv1 = GCNLayer(in_ch, out_ch)
+        # Re-define conv1 to operate on the fused dim (fusion is inherited
+        # from GCNEncoder and always outputs FUSED_DIM regardless of in_ch).
+        self.conv1 = GCNLayer(NodeFeatureFusion.FUSED_DIM, out_ch)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        x = self.fusion(x)              # [N, raw_dim] → [N, 128] via NodeFeatureFusion
         h = self.conv1(x, edge_index)
         h = self.dropout(h)
         return h.mean(dim=0, keepdim=True)
@@ -164,47 +171,26 @@ def update_config_path(key: str, value, config_dict: dict):
     d[parts[-1]] = value
 
 
-# ─── Graph Type Checking & Statistics Helpers ───────────────────────────────
-
-def is_graph_virtual(graph) -> bool:
-    """Detects if a graph is virtual based on zero-valued embeddings for method/field nodes."""
-    x = graph["x"]
-    if x.shape[0] <= 1:
-        # Only class node present. Without methods/fields we check if javalang is missing.
-        try:
-            import javalang
-            return False
-        except ImportError:
-            return True
-    
-    # In virtual graphs, the method and field node embeddings (index 9 onwards) are all zeros.
-    embedding_part = x[1:, 9:]
-    return bool(torch.all(embedding_part == 0.0).item())
-
+# ─── Dataset Statistics Helper ──────────────────────────────────────────────
 
 def collect_dataset_stats(dataset, dataset_name: str) -> dict:
-    """Computes virtual/AST counts and per-class distributions."""
+    """Computes per-class sample distribution for a dataset split.
+
+    All graphs in the dataset are guaranteed to be real AST graphs built from
+    parseable Java source. The former virtual-graph tracking has been removed
+    since the virtual-graph fallback pipeline no longer exists.
+    """
     total = len(dataset)
-    virtual_count = 0
     class_counts = {s: 0 for s in SMELL_CLASSES}
-    virtual_class_counts = {s: 0 for s in SMELL_CLASSES}
-    
+
     for item in dataset:
         true_idx = int(item["y"].item())
         smell_name = SMELL_CLASSES[true_idx]
         class_counts[smell_name] += 1
-        
-        is_virt = is_graph_virtual(item)
-        if is_virt:
-            virtual_count += 1
-            virtual_class_counts[smell_name] += 1
-            
+
     return {
         "total_graphs": total,
-        "virtual_graphs": virtual_count,
-        "ast_graphs": total - virtual_count,
         "class_distribution": class_counts,
-        "virtual_class_distribution": virtual_class_counts
     }
 
 
