@@ -1,116 +1,430 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <title>SmellRL: Data Pipeline</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmellRL – Data Pipeline & Feature Extraction</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f8f9fa;
-            padding: 20px;
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 24px;
+        }
+
+        .page-title {
+            color: #e2e8f0;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            opacity: 0.6;
+        }
+
+        .page-heading {
+            color: #f8fafc;
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 36px;
             text-align: center;
         }
 
-        .btn {
-            background: #2c3e50;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            transition: 0.3s;
-            font-weight: bold;
+        .page-heading span {
+            background: linear-gradient(90deg, #818cf8, #a78bfa, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
-        .btn:hover {
-            background: #1a252f;
+        .card {
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 36px 40px;
+            width: 100%;
+            max-width: 960px;
         }
 
-        .diagram-container {
-            background: white;
-            padding: 30px;
+        /* ── Pipeline row layout ── */
+        .pipeline {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .stage {
+            display: flex;
+            align-items: stretch;
+            gap: 0;
+            position: relative;
+        }
+
+        .stage-label {
+            width: 110px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 14px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.35);
+        }
+
+        .connector-col {
+            width: 2px;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .connector-col .line {
+            position: absolute;
+            left: 0;
+            width: 2px;
+            background: linear-gradient(180deg, rgba(129,140,248,0.6) 0%, rgba(167,139,250,0.3) 100%);
+        }
+
+        .connector-col .dot {
+            position: absolute;
+            left: -5px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #818cf8;
+            box-shadow: 0 0 12px rgba(129,140,248,0.8);
+        }
+
+        .stage-body {
+            flex: 1;
+            padding: 0 0 0 24px;
+        }
+
+        /* ── Node boxes ── */
+        .node {
             border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-            display: inline-block;
+            padding: 14px 18px;
+            margin: 12px 0;
+            border: 1px solid;
+            position: relative;
         }
+
+        .node-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .node-sub {
+            font-size: 11px;
+            opacity: 0.7;
+            line-height: 1.5;
+        }
+
+        .node.input {
+            background: rgba(51,65,85,0.6);
+            border-color: rgba(100,116,139,0.4);
+            color: #cbd5e1;
+        }
+
+        .node.parse {
+            background: rgba(30,58,138,0.4);
+            border-color: rgba(96,165,250,0.35);
+            color: #bfdbfe;
+        }
+
+        .node.graph {
+            background: rgba(20,83,45,0.4);
+            border-color: rgba(74,222,128,0.35);
+            color: #bbf7d0;
+        }
+
+        .node.fusion-struct {
+            background: rgba(124,45,18,0.5);
+            border-color: rgba(251,146,60,0.4);
+            color: #fed7aa;
+        }
+
+        .node.fusion-sem {
+            background: rgba(88,28,135,0.4);
+            border-color: rgba(192,132,252,0.4);
+            color: #e9d5ff;
+        }
+
+        .node.fused {
+            background: rgba(6,78,59,0.5);
+            border-color: rgba(52,211,153,0.45);
+            color: #a7f3d0;
+        }
+
+        .node.output {
+            background: rgba(49,46,129,0.5);
+            border-color: rgba(129,140,248,0.5);
+            color: #c7d2fe;
+        }
+
+        /* ── Feature breakdown grid ── */
+        .feat-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin: 14px 0;
+        }
+
+        .feat-card {
+            border-radius: 10px;
+            padding: 12px 14px;
+            border: 1px solid;
+        }
+
+        .feat-card .dims {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            line-height: 1;
+        }
+
+        .feat-card .feat-label {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+        }
+
+        .feat-card .feat-desc {
+            font-size: 10px;
+            opacity: 0.65;
+            margin-top: 3px;
+            line-height: 1.4;
+        }
+
+        .feat-card.type { background: rgba(15,23,42,0.5); border-color: rgba(100,116,139,0.4); color: #94a3b8; }
+        .feat-card.ck   { background: rgba(30,58,138,0.3); border-color: rgba(96,165,250,0.3); color: #93c5fd; }
+        .feat-card.du   { background: rgba(124,45,18,0.3); border-color: rgba(251,146,60,0.3); color: #fdba74; }
+        .feat-card.sem  { background: rgba(88,28,135,0.3); border-color: rgba(192,132,252,0.3); color: #d8b4fe; }
+
+        /* ── Fusion diagram ── */
+        .fusion-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin: 14px 0;
+        }
+
+        .fusion-in {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+        }
+
+        .fusion-arrow-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            color: rgba(255,255,255,0.3);
+            font-size: 18px;
+        }
+
+        .fusion-out {
+            flex: 0.6;
+        }
+
+        .dim-badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            border-radius: 4px;
+            padding: 2px 7px;
+            letter-spacing: 0.5px;
+        }
+        .dim-badge.struct { background: rgba(251,146,60,0.25); color: #fdba74; border: 1px solid rgba(251,146,60,0.3); }
+        .dim-badge.sem    { background: rgba(192,132,252,0.2); color: #d8b4fe; border: 1px solid rgba(192,132,252,0.25); }
+        .dim-badge.fused  { background: rgba(52,211,153,0.2);  color: #6ee7b7; border: 1px solid rgba(52,211,153,0.3); }
+
+        .arrow-down {
+            text-align: center;
+            color: rgba(129,140,248,0.5);
+            font-size: 20px;
+            line-height: 1;
+            margin: 4px 0;
+        }
+
+        .section-divider {
+            border: none;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            margin: 20px 0;
+        }
+
+        .section-header {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.3);
+            margin-bottom: 14px;
+        }
+
+        .edge-types {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .edge-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1px solid;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .edge-pill.contains { border-color: rgba(96,165,250,0.4);  color: #93c5fd; background: rgba(30,58,138,0.3); }
+        .edge-pill.calls    { border-color: rgba(74,222,128,0.4);  color: #86efac; background: rgba(20,83,45,0.3); }
+        .edge-pill.accesses { border-color: rgba(251,146,60,0.4);  color: #fdba74; background: rgba(124,45,18,0.3); }
+
+        .edge-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+        }
+        .edge-dot.contains { background: #60a5fa; }
+        .edge-dot.calls    { background: #4ade80; }
+        .edge-dot.accesses { background: #fb923c; }
     </style>
 </head>
-
 <body>
-    <button class="btn" onclick="downloadDiagram('data_pipeline.png')">📥 Download High-Res PNG</button>
-    <br>
-    <div class="diagram-container">
-        <div class="mermaid" id="mermaid-diagram">
-            graph TD
-            %% Styles
-            classDef input fill:#34495e,color:#fff,stroke:#2c3e50,stroke-width:2px;
-            classDef process fill:#3498db,color:#fff,stroke:#2980b9,stroke-width:2px;
-            classDef decision fill:#f39c12,color:#fff,stroke:#e67e22,stroke-width:2px;
-            classDef semantic fill:#27ae60,color:#fff,stroke:#2ecc71,stroke-width:2px;
-            classDef fallback fill:#e74c3c,color:#fff,stroke:#c0392b,stroke-width:2px;
-            classDef output fill:#8e44ad,color:#fff,stroke:#9b59b6,stroke-width:3px;
+    <div class="page-title">SmellRL Pipeline</div>
+    <div class="page-heading">Data Pipeline & <span>Feature Extraction</span></div>
 
-            Raw[/Raw Java Source File/]:::input --> Parser{javalang AST Builder}:::decision
+    <div class="card">
+        <div class="pipeline">
 
-            Parser -->|Success ~90%| AST[Abstract Syntax Tree <br /> Nodes & Topological Edges]:::process
-            Parser -->|Failure ~10%| VirtGraph[Virtual Graph Generation]:::fallback
+            <!-- Stage 0 -->
+            <div class="stage">
+                <div class="stage-label">Stage 0</div>
+                <div class="node input" style="flex:1; margin-left:24px;">
+                    <div class="node-title">📄 Raw MLCQ CSV</div>
+                    <div class="node-sub">Java source code + smell labels (GodClass, FeatureEnvy, LongMethod, DataClass, NoSmell)</div>
+                </div>
+            </div>
 
-            AST --> Embedder[Semantic Embedder <br /> GraphCodeBERT]:::semantic
-            VirtGraph --> CKM[CK Metrics Extractor <br /> WMC, DIT, NOC, CBO, etc.]:::fallback
+            <div class="arrow-down">↓</div>
 
-            Embedder -->|768-d Dense Vectors| HetGraph[(Heterogeneous Graph <br /> Structure + Semantics)]:::output
-            CKM -->|Numerical Node Features| HetGraph
+            <!-- Stage 1 — Parse -->
+            <div class="stage">
+                <div class="stage-label">Stage 1</div>
+                <div class="node parse" style="flex:1; margin-left:24px;">
+                    <div class="node-title">🔬 AST Parse Validation &amp; Class Balancing</div>
+                    <div class="node-sub"><code>javalang</code> via <code>ProcessPoolExecutor</code> — rows failing parse are discarded (cached to <code>_parseable.csv</code>). NoSmell downsampled at ratio 3.0×</div>
+                </div>
+            </div>
+
+            <div class="arrow-down">↓</div>
+
+            <!-- Stage 2 — Graph nodes -->
+            <div class="stage">
+                <div class="stage-label">Stage 2</div>
+                <div style="flex:1; margin-left:24px;">
+                    <div class="node graph">
+                        <div class="node-title">🌐 Heterogeneous AST Graph Construction</div>
+                        <div class="node-sub">3 node types: Class (idx 0) · Method (idx 1…M) · Field (idx M+1…M+F)</div>
+                    </div>
+
+                    <hr class="section-divider">
+
+                    <div class="section-header">783-Dimensional Node Feature Vector</div>
+                    <div class="feat-grid">
+                        <div class="feat-card type">
+                            <div class="dims">3</div>
+                            <div class="feat-label">Node Type</div>
+                            <div class="feat-desc">One-hot [Class | Method | Field]</div>
+                        </div>
+                        <div class="feat-card ck">
+                            <div class="dims">6</div>
+                            <div class="feat-label">CK Metrics</div>
+                            <div class="feat-desc">WMC, DIT, NOC, CBO, RFC, LOC (normalised)</div>
+                        </div>
+                        <div class="feat-card du">
+                            <div class="dims">6</div>
+                            <div class="feat-label">Data-Usage</div>
+                            <div class="feat-desc">Field access, method calls, external objects, ratios</div>
+                        </div>
+                        <div class="feat-card sem">
+                            <div class="dims">768</div>
+                            <div class="feat-label">GraphCodeBERT</div>
+                            <div class="feat-desc">CLS-token embedding (microsoft/graphcodebert-base)</div>
+                        </div>
+                    </div>
+
+                    <hr class="section-divider">
+
+                    <div class="section-header">Heterogeneous Edge Types</div>
+                    <div class="edge-types">
+                        <div class="edge-pill contains"><span class="edge-dot contains"></span>CONTAINS — Class ↔ Method, Class ↔ Field</div>
+                        <div class="edge-pill calls"><span class="edge-dot calls"></span>CALLS — Method A → Method B (same class)</div>
+                        <div class="edge-pill accesses"><span class="edge-dot accesses"></span>ACCESSES_FIELD — Method A → Field F</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="arrow-down">↓</div>
+
+            <!-- Stage 3 — NodeFeatureFusion -->
+            <div class="stage">
+                <div class="stage-label">Stage 3</div>
+                <div style="flex:1; margin-left:24px;">
+                    <div class="section-header">NodeFeatureFusion  —  3× Structural Priority</div>
+                    <div class="fusion-row">
+                        <div class="fusion-in">
+                            <div class="node fusion-struct">
+                                <span class="dim-badge struct">15 → 96 dims</span>
+                                <div class="node-title" style="margin-top:8px;">Structural Branch  (MLP)</div>
+                                <div class="node-sub">Linear(15→48) → ReLU → Linear(48→96) → LayerNorm<br>Captures non-linear CK × data-usage interactions</div>
+                            </div>
+                            <div class="node fusion-sem">
+                                <span class="dim-badge sem">768 → 32 dims</span>
+                                <div class="node-title" style="margin-top:8px;">Semantic Branch  (Projection)</div>
+                                <div class="node-sub">Linear(768→32) → LayerNorm<br>Compresses pre-trained GraphCodeBERT space</div>
+                            </div>
+                        </div>
+                        <div class="fusion-arrow-col">
+                            <div style="font-size:28px; color:rgba(52,211,153,0.6);">→</div>
+                            <div style="font-size:10px; color:rgba(255,255,255,0.3); writing-mode:vertical-lr; letter-spacing:2px;">concat</div>
+                        </div>
+                        <div class="fusion-out">
+                            <div class="node fused" style="margin:0;">
+                                <span class="dim-badge fused">128 dims</span>
+                                <div class="node-title" style="margin-top:8px;">Fused Node Features</div>
+                                <div class="node-sub">[struct_96 | sem_32] — balanced representation per node. Structure holds 75% of the capacity.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="arrow-down">↓</div>
+
+            <!-- Output -->
+            <div class="stage">
+                <div class="stage-label">Output</div>
+                <div class="node output" style="flex:1; margin-left:24px;">
+                    <div class="node-title">✅ Attributed Heterogeneous Graph</div>
+                    <div class="node-sub"><strong>x:</strong> [N × 128]  ·  <strong>edge_index:</strong> [2 × E]  ·  <strong>y:</strong> smell label  → serialised to <code>data/processed/{train,val,test}.pt</code></div>
+                </div>
+            </div>
+
         </div>
     </div>
-
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
-    </script>
-    <script>
-        function downloadDiagram(filename) {
-            const svg = document.querySelector('.mermaid svg');
-            if (!svg) return alert('Diagram is still rendering, please wait a second.');
-
-            // Get exact dimensions
-            const box = svg.getBoundingClientRect();
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-
-            // Scale by 3 for High Resolution (Journal Quality)
-            const scale = 3;
-            canvas.width = box.width * scale;
-            canvas.height = box.height * scale;
-
-            // Set up SVG string with explicit dimensions to prevent cropping issues
-            const clonedSvg = svg.cloneNode(true);
-            clonedSvg.setAttribute('width', box.width);
-            clonedSvg.setAttribute('height', box.height);
-            const data = (new XMLSerializer()).serializeToString(clonedSvg);
-            const DOMURL = window.URL || window.webkitURL || window;
-            const img = new Image();
-            const svgBlob = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
-            const url = DOMURL.createObjectURL(svgBlob);
-
-            img.onload = function () {
-                ctx.fillStyle = "white"; // Solid white background
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.scale(scale, scale);
-                ctx.drawImage(img, 0, 0);
-                DOMURL.revokeObjectURL(url);
-
-                // Trigger Download
-                const a = document.createElement('a');
-                a.download = filename;
-                a.href = canvas.toDataURL('image/png');
-                a.click();
-            };
-            img.src = url;
-        }
-    </script>
 </body>
-
 </html>

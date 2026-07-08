@@ -1,110 +1,476 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <title>SmellRL: Complete Architecture</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmellRL – Complete System Architecture</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f8f9fa;
-            padding: 20px;
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(160deg, #0a0a1a 0%, #0f0c29 40%, #1a0533 70%, #0a0a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 48px 24px;
+        }
+
+        .page-eyebrow {
+            color: rgba(255,255,255,0.35);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .page-heading {
+            color: #f8fafc;
+            font-size: 30px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            text-align: center;
+            letter-spacing: -0.5px;
+        }
+
+        .page-heading .accent {
+            background: linear-gradient(90deg, #818cf8, #a78bfa, #c084fc, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .page-sub {
+            color: rgba(255,255,255,0.35);
+            font-size: 13px;
+            margin-bottom: 44px;
             text-align: center;
         }
 
-        .btn {
-            background: #2c3e50;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            font-weight: bold;
+        /* ── Phase cards ── */
+        .phases {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            width: 100%;
+            max-width: 1040px;
         }
 
-        .btn:hover {
-            background: #1a252f;
+        .phase {
+            display: flex;
+            gap: 0;
         }
 
-        .diagram-container {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        /* left label column */
+        .phase-label-col {
+            width: 140px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            padding-right: 20px;
+            padding-top: 24px;
+        }
+
+        .phase-num {
+            font-size: 36px;
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .phase-name {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-top: 4px;
+            text-align: right;
+        }
+
+        /* center connector */
+        .connector {
+            width: 2px;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .connector-line {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 2px;
+        }
+
+        .connector-dot {
+            position: absolute;
+            top: 28px;
+            left: -5px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            box-shadow: 0 0 12px currentColor;
+        }
+
+        /* right content */
+        .phase-content {
+            flex: 1;
+            padding: 20px 0 20px 28px;
+        }
+
+        .phase-card {
+            border-radius: 16px;
+            padding: 22px 26px;
+            border: 1px solid;
+            margin-bottom: 12px;
+        }
+
+        .phase-card:last-child { margin-bottom: 0; }
+
+        .pc-title {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .pc-body {
+            font-size: 11px;
+            line-height: 1.7;
+            opacity: 0.7;
+        }
+
+        /* sub-items grid */
+        .sub-grid {
+            display: grid;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .sub-grid-2 { grid-template-columns: 1fr 1fr; }
+        .sub-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+        .sub-item {
+            border-radius: 10px;
+            padding: 11px 14px;
+            border: 1px solid;
+            font-size: 10px;
+            line-height: 1.5;
+        }
+
+        .sub-title {
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        /* Phase colour themes */
+        /* Phase 1 – teal / green */
+        .p1-num  { color: #34d399; }
+        .p1-name { color: rgba(52,211,153,0.5); }
+        .p1-line { background: linear-gradient(180deg, rgba(52,211,153,0.7) 0%, rgba(52,211,153,0.1) 100%); }
+        .p1-dot  { background: #34d399; color: #34d399; }
+        .p1-card { background: rgba(6,78,59,0.3); border-color: rgba(52,211,153,0.35); color: #a7f3d0; }
+        .p1-sub  { background: rgba(6,78,59,0.2); border-color: rgba(52,211,153,0.2); color: #bbf7d0; }
+
+        /* Phase 2 – orange / amber */
+        .p2-num  { color: #fb923c; }
+        .p2-name { color: rgba(251,146,60,0.5); }
+        .p2-line { background: linear-gradient(180deg, rgba(251,146,60,0.7) 0%, rgba(251,146,60,0.1) 100%); }
+        .p2-dot  { background: #fb923c; color: #fb923c; }
+        .p2-card { background: rgba(124,45,18,0.3); border-color: rgba(251,146,60,0.4); color: #fed7aa; }
+        .p2-sub  { background: rgba(124,45,18,0.2); border-color: rgba(251,146,60,0.2); color: #fdba74; }
+
+        /* Phase 3 – blue */
+        .p3-num  { color: #60a5fa; }
+        .p3-name { color: rgba(96,165,250,0.5); }
+        .p3-line { background: linear-gradient(180deg, rgba(96,165,250,0.7) 0%, rgba(96,165,250,0.1) 100%); }
+        .p3-dot  { background: #60a5fa; color: #60a5fa; }
+        .p3-card { background: rgba(30,58,138,0.3); border-color: rgba(96,165,250,0.4); color: #bfdbfe; }
+        .p3-sub  { background: rgba(30,58,138,0.2); border-color: rgba(96,165,250,0.2); color: #93c5fd; }
+
+        /* Phase 4 – purple / violet */
+        .p4-num  { color: #a78bfa; }
+        .p4-name { color: rgba(167,139,250,0.5); }
+        .p4-line { background: linear-gradient(180deg, rgba(167,139,250,0.7) 0%, rgba(167,139,250,0.1) 100%); }
+        .p4-dot  { background: #a78bfa; color: #a78bfa; }
+        .p4-card { background: rgba(76,29,149,0.3); border-color: rgba(167,139,250,0.4); color: #ddd6fe; }
+        .p4-sub  { background: rgba(76,29,149,0.2); border-color: rgba(167,139,250,0.2); color: #c4b5fd; }
+
+        /* Phase 5 – pink / rose */
+        .p5-num  { color: #f472b6; }
+        .p5-name { color: rgba(244,114,182,0.5); }
+        .p5-line { background: linear-gradient(180deg, rgba(244,114,182,0.7) 0%, rgba(244,114,182,0.0) 100%); }
+        .p5-dot  { background: #f472b6; color: #f472b6; }
+        .p5-card { background: rgba(131,24,67,0.3); border-color: rgba(244,114,182,0.4); color: #fbcfe8; }
+        .p5-sub  { background: rgba(131,24,67,0.2); border-color: rgba(244,114,182,0.2); color: #f9a8d4; }
+
+        .badge {
             display: inline-block;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .flow-arrow {
+            text-align: center;
+            font-size: 24px;
+            color: rgba(255,255,255,0.12);
+            line-height: 1;
+            padding: 2px 0;
+        }
+
+        .output-row {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .smell-pill {
+            border-radius: 8px;
+            padding: 8px 10px;
+            border: 1px solid;
+            font-size: 10px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .pattern-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .pattern-pill {
+            border-radius: 20px;
+            padding: 5px 12px;
+            border: 1px solid rgba(244,114,182,0.3);
+            background: rgba(131,24,67,0.2);
+            color: #f9a8d4;
+            font-size: 10px;
+            font-weight: 500;
         }
     </style>
 </head>
-
 <body>
-    <button class="btn" onclick="downloadDiagram('complete_architecture.png')">📥 Download High-Res PNG</button>
-    <br>
-    <div class="diagram-container">
-        <div class="mermaid">
-            graph TD
-            %% Core Styles
-            classDef input fill:#34495e,color:#fff,stroke:#2c3e50,stroke-width:2px;
-            classDef semantic fill:#27ae60,color:#fff,stroke:#2ecc71,stroke-width:2px;
-            classDef graphStyle fill:#8e44ad,color:#fff,stroke:#9b59b6,stroke-width:2px;
-            classDef net fill:#c0392b,color:#fff,stroke:#e74c3c,stroke-width:2px;
-            classDef stateStyle fill:#2980b9,color:#fff,stroke:#3498db,stroke-width:3px;
+    <div class="page-eyebrow">End-to-End Architecture</div>
+    <div class="page-heading">SmellRL <span class="accent">System Overview</span></div>
+    <div class="page-sub">GCN + GraphCodeBERT + Deep Reinforcement Learning for Java Code Smell Detection</div>
 
-            subgraph Module1 ["1. Data Pipeline and Feature Extraction"]
-            Code[/"Raw Java Code"/]:::input --> AST{"AST Builder"}
-            AST -->|"Success"| BERT["GraphCodeBERT Embedding"]:::semantic
-            AST -->|"Failure"| CK["CK Metrics Fallback"]
-            BERT --> GraphData[("Heterogeneous Graph")]:::graphStyle
-            CK --> GraphData
-            end
+    <div class="phases">
 
-            subgraph Module2 ["2. Graph Encoder Layer"]
-            GraphData --> GCN["2-Layer GCN"]
-            GCN --> Agg["Neighborhood Aggregation"]
-            Agg --> StateNode(("State S_t <br /> 128-d Vector")):::stateStyle
-            end
-
-            subgraph Module3 ["3. RL Decision Agent"]
-            StateNode --> DQN["DQN Classifier"]:::net
-            DQN --> ActionSpace["Action: 5 Classes"]
-            ActionSpace --> Env["Environment"]
-            Env -->|"Asymmetric Reward Shaping"| Buffer[("Replay Buffer")]
-            Buffer -->|"Mini-batch Training"| DQN
-            DQN -.->|"Weight Synchronization"| Target["Target Network"]:::net
-            end
-
-            style Module1 fill:#f4f6f7,stroke:#bdc3c7,stroke-width:2px
-            style Module2 fill:#f4f6f7,stroke:#bdc3c7,stroke-width:2px
-            style Module3 fill:#f4f6f7,stroke:#bdc3c7,stroke-width:2px
+        <!-- ─── Phase 1 ─── -->
+        <div class="phase">
+            <div class="phase-label-col">
+                <div class="phase-num p1-num">01</div>
+                <div class="phase-name p1-name">Data &amp;<br>Graphs</div>
+            </div>
+            <div class="connector">
+                <div class="connector-line p1-line"></div>
+                <div class="connector-dot p1-dot"></div>
+            </div>
+            <div class="phase-content">
+                <div class="phase-card p1-card">
+                    <div class="pc-title">🗄️ MLCQ Dataset Loading &amp; AST Graph Construction</div>
+                    <div class="pc-body">
+                        Raw Java source → <code>javalang</code> multiprocessing parse validation → class balancing (NoSmell ratio 3.0×) → stratified 70/15/15 split
+                    </div>
+                    <div class="sub-grid sub-grid-3" style="margin-top:12px;">
+                        <div class="sub-item p1-sub">
+                            <div class="sub-title">Node Types</div>
+                            Class · Method · Field<br>one-hot encoded (3 dims)
+                        </div>
+                        <div class="sub-item p1-sub">
+                            <div class="sub-title">Structural Features</div>
+                            CK metrics (6 dims)<br>Data-usage features (6 dims)
+                        </div>
+                        <div class="sub-item p1-sub">
+                            <div class="sub-title">Semantic Features</div>
+                            GraphCodeBERT CLS<br>embedding (768 dims)
+                        </div>
+                    </div>
+                    <div class="sub-grid sub-grid-3" style="margin-top:8px;">
+                        <div class="sub-item p1-sub"><div class="sub-title">CONTAINS edges</div>Class ↔ Method, Class ↔ Field</div>
+                        <div class="sub-item p1-sub"><div class="sub-title">CALLS edges</div>Method A → Method B</div>
+                        <div class="sub-item p1-sub"><div class="sub-title">ACCESSES edges</div>Method A → Field F</div>
+                    </div>
+                </div>
+            </div>
         </div>
+
+        <div class="flow-arrow">↓</div>
+
+        <!-- ─── Phase 2 ─── -->
+        <div class="phase">
+            <div class="phase-label-col">
+                <div class="phase-num p2-num">02</div>
+                <div class="phase-name p2-name">Feature<br>Fusion</div>
+            </div>
+            <div class="connector">
+                <div class="connector-line p2-line"></div>
+                <div class="connector-dot p2-dot"></div>
+            </div>
+            <div class="phase-content">
+                <div class="phase-card p2-card">
+                    <div class="pc-title">⚡ NodeFeatureFusion — Structural Priority (3× Advantage)</div>
+                    <div class="pc-body">
+                        Resolves the 98.1% semantic dominance problem in the raw 783-dim vector by projecting each group to a capacity-balanced space.
+                    </div>
+                    <div class="sub-grid sub-grid-2" style="margin-top:12px;">
+                        <div class="sub-item p2-sub">
+                            <div class="sub-title">🏗️ Structural Branch  →  96 dims (75%)</div>
+                            15 dims (node-type + CK + data-usage)<br>
+                            MLP: Linear(15→48)→ReLU→Linear(48→96)→LayerNorm<br>
+                            Learns non-linear CK × data-usage interactions
+                        </div>
+                        <div class="sub-item p2-sub">
+                            <div class="sub-title">🔤 Semantic Branch  →  32 dims (25%)</div>
+                            768 dims (GraphCodeBERT CLS)<br>
+                            Linear(768→32)→LayerNorm<br>
+                            Compresses pre-trained semantic space
+                        </div>
+                    </div>
+                    <div class="sub-item p2-sub" style="margin-top:8px;">
+                        <div class="sub-title">Output: cat([struct₉₆, sem₃₂]) = 128-dim node features per graph node</div>
+                        Both graph branches now visible equally to GCN layers · No dimension imbalance
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrow">↓</div>
+
+        <!-- ─── Phase 3 ─── -->
+        <div class="phase">
+            <div class="phase-label-col">
+                <div class="phase-num p3-num">03</div>
+                <div class="phase-name p3-name">GCN<br>Pre-train</div>
+            </div>
+            <div class="connector">
+                <div class="connector-line p3-line"></div>
+                <div class="connector-dot p3-dot"></div>
+            </div>
+            <div class="phase-content">
+                <div class="phase-card p3-card">
+                    <div class="pc-title">🔷 GCN Encoder — 2-Layer Spectral Graph Convolution</div>
+                    <div class="pc-body">
+                        Input [N × 128] → GCNLayer1(128→128) → LayerNorm → Dropout(0.1) → GCNLayer2(128→128) ⊕ skip_proj(x̃) → LayerNorm → AttentionPooling → [1 × 128] state
+                    </div>
+                    <div class="sub-grid sub-grid-3" style="margin-top:12px;">
+                        <div class="sub-item p3-sub">
+                            <div class="sub-title">Pre-training Objective</div>
+                            CrossEntropyLoss with Linear(128→5) head<br>
+                            50 epochs · Adam lr=0.001<br>
+                            Provides warm-start for RL
+                        </div>
+                        <div class="sub-item p3-sub">
+                            <div class="sub-title">Residual Skip Connection</div>
+                            h₂ += skip_proj(x̃)<br>
+                            Linear(128→128) bypass<br>
+                            Prevents vanishing gradients
+                        </div>
+                        <div class="sub-item p3-sub">
+                            <div class="sub-title">AttentionPooling</div>
+                            w = σ(Linear(h,1)) / Σw<br>
+                            z = Σ(wᵢ·hᵢ) — [1 × 128]<br>
+                            Learns node importance weights
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrow">↓</div>
+
+        <!-- ─── Phase 4 ─── -->
+        <div class="phase">
+            <div class="phase-label-col">
+                <div class="phase-num p4-num">04</div>
+                <div class="phase-name p4-name">Deep RL<br>Training</div>
+            </div>
+            <div class="connector">
+                <div class="connector-line p4-line"></div>
+                <div class="connector-dot p4-dot"></div>
+            </div>
+            <div class="phase-content">
+                <div class="phase-card p4-card">
+                    <div class="pc-title">🧠 DQN Agent — Contextual Bandit (γ = 0)</div>
+                    <div class="pc-body">
+                        State [1×128] → DQN [256→128→64→5] → ε-greedy action → asymmetric class-weighted reward → ReplayBuffer(50k) → Huber loss → joint GCN+DQN update
+                    </div>
+                    <div class="sub-grid sub-grid-2" style="margin-top:12px;">
+                        <div class="sub-item p4-sub">
+                            <div class="sub-title">Asymmetric Reward Shaping</div>
+                            Correct smell: <strong>+2.0</strong> · Correct NoSmell: <strong>+0.5</strong><br>
+                            Wrong smell type: <strong>−1.0</strong><br>
+                            False alarm: <strong>−0.5</strong> · Missed smell: <strong>−2.0</strong><br>
+                            × inverse-frequency class weight
+                        </div>
+                        <div class="sub-item p4-sub">
+                            <div class="sub-title">Training Configuration</div>
+                            200 episodes · Adam lr=5×10⁻⁴<br>
+                            CosineAnnealingLR · grad clip 1.0<br>
+                            Target net sync every 1 000 steps<br>
+                            ε: 1.0→0.05 over 250 000 steps
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrow">↓</div>
+
+        <!-- ─── Phase 5 ─── -->
+        <div class="phase">
+            <div class="phase-label-col">
+                <div class="phase-num p5-num">05</div>
+                <div class="phase-name p5-name">Output &amp;<br>Evaluation</div>
+            </div>
+            <div class="connector">
+                <div class="connector-line p5-line"></div>
+                <div class="connector-dot p5-dot"></div>
+            </div>
+            <div class="phase-content">
+                <div class="phase-card p5-card">
+                    <div class="pc-title">✅ Smell Detection &amp; Pattern Recommendation</div>
+                    <div class="pc-body">Evaluated against Random Agent, Rule-Based (Designite-like), and SVM + CK Metrics on held-out test set</div>
+                    <div class="output-row">
+                        <div class="smell-pill" style="background:rgba(131,24,67,0.3);border-color:rgba(244,114,182,0.35);color:#f9a8d4;">GodClass<br><span style="font-size:9px;opacity:0.7;">Facade · Mediator</span></div>
+                        <div class="smell-pill" style="background:rgba(131,24,67,0.3);border-color:rgba(244,114,182,0.35);color:#f9a8d4;">FeatureEnvy<br><span style="font-size:9px;opacity:0.7;">Strategy · ExtractClass</span></div>
+                        <div class="smell-pill" style="background:rgba(131,24,67,0.3);border-color:rgba(244,114,182,0.35);color:#f9a8d4;">LongMethod<br><span style="font-size:9px;opacity:0.7;">ExtractClass</span></div>
+                        <div class="smell-pill" style="background:rgba(131,24,67,0.3);border-color:rgba(244,114,182,0.35);color:#f9a8d4;">DataClass<br><span style="font-size:9px;opacity:0.7;">Observer</span></div>
+                        <div class="smell-pill" style="background:rgba(6,78,59,0.3);border-color:rgba(52,211,153,0.3);color:#6ee7b7;">NoSmell<br><span style="font-size:9px;opacity:0.7;">No action</span></div>
+                    </div>
+                    <div class="sub-item p5-sub" style="margin-top:12px; display:grid; grid-template-columns:repeat(4,1fr); gap:8px; background:transparent; border:none; padding:0;">
+                        <div style="background:rgba(131,24,67,0.2);border:1px solid rgba(244,114,182,0.2);border-radius:8px;padding:10px;text-align:center;">
+                            <div style="font-size:20px;font-weight:800;color:#f472b6;">0.459</div>
+                            <div style="font-size:9px;opacity:0.6;margin-top:2px;">Macro F1</div>
+                        </div>
+                        <div style="background:rgba(131,24,67,0.2);border:1px solid rgba(244,114,182,0.2);border-radius:8px;padding:10px;text-align:center;">
+                            <div style="font-size:20px;font-weight:800;color:#f472b6;">0.503</div>
+                            <div style="font-size:9px;opacity:0.6;margin-top:2px;">Accuracy</div>
+                        </div>
+                        <div style="background:rgba(131,24,67,0.2);border:1px solid rgba(244,114,182,0.2);border-radius:8px;padding:10px;text-align:center;">
+                            <div style="font-size:20px;font-weight:800;color:#f472b6;">0.449</div>
+                            <div style="font-size:9px;opacity:0.6;margin-top:2px;">Precision</div>
+                        </div>
+                        <div style="background:rgba(131,24,67,0.2);border:1px solid rgba(244,114,182,0.2);border-radius:8px;padding:10px;text-align:center;">
+                            <div style="font-size:20px;font-weight:800;color:#f472b6;">0.508</div>
+                            <div style="font-size:9px;opacity:0.6;margin-top:2px;">Recall</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
-
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    </script>
-    <script>
-        function downloadDiagram(filename) {
-            const svg = document.querySelector('.mermaid svg');
-            if (!svg) return alert('Rendering...');
-            const box = svg.getBoundingClientRect();
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const scale = 3; canvas.width = box.width * scale; canvas.height = box.height * scale;
-            const clonedSvg = svg.cloneNode(true);
-            clonedSvg.setAttribute('width', box.width);
-            clonedSvg.setAttribute('height', box.height);
-            if (!clonedSvg.getAttribute('xmlns')) clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-            const img = new Image();
-            img.onload = function () {
-                ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
-                const a = document.createElement('a'); a.download = filename; a.href = canvas.toDataURL('image/png'); a.click();
-            };
-            img.src = window.URL.createObjectURL(new Blob([(new XMLSerializer()).serializeToString(clonedSvg)], { type: 'image/svg+xml;charset=utf-8' }));
-        }
-    </script>
 </body>
-
 </html>

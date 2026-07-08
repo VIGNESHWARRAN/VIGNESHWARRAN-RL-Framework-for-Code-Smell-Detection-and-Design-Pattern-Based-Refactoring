@@ -1,85 +1,305 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <title>SmellRL: Graph Encoder</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmellRL – GCN Encoder Architecture</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f8f9fa;
-            padding: 20px;
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0d1b2a, #1b2838, #0f2027);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 24px;
+        }
+
+        .page-title {
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .page-heading {
+            color: #f8fafc;
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 36px;
             text-align: center;
         }
 
-        .btn {
-            background: #2c3e50;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            font-weight: bold;
+        .page-heading span {
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
-        .btn:hover {
-            background: #1a252f;
+        .card {
+            background: rgba(255,255,255,0.04);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 860px;
         }
 
-        .diagram-container {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        /* ── Encoder flow ── */
+        .enc-flow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+        }
+
+        .layer-block {
+            width: 100%;
+            max-width: 680px;
+            border-radius: 14px;
+            padding: 18px 22px;
+            border: 1px solid;
+            position: relative;
+        }
+
+        .layer-title {
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .layer-sub {
+            font-size: 11px;
+            line-height: 1.6;
+            opacity: 0.7;
+        }
+
+        .layer-dims {
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        /* colour tokens */
+        .l-input   { background: rgba(20,83,45,0.35);   border-color: rgba(74,222,128,0.35);   color: #bbf7d0; }
+        .l-fusion  { background: rgba(124,45,18,0.35);  border-color: rgba(251,146,60,0.45);   color: #fed7aa; }
+        .l-gcn1    { background: rgba(30,58,138,0.35);  border-color: rgba(96,165,250,0.4);    color: #bfdbfe; }
+        .l-norm    { background: rgba(15,23,42,0.5);    border-color: rgba(100,116,139,0.35);  color: #94a3b8; }
+        .l-gcn2    { background: rgba(30,58,138,0.35);  border-color: rgba(96,165,250,0.4);    color: #bfdbfe; }
+        .l-skip    { background: rgba(88,28,135,0.3);   border-color: rgba(192,132,252,0.35);  color: #e9d5ff; }
+        .l-pool    { background: rgba(6,78,59,0.4);     border-color: rgba(52,211,153,0.4);    color: #a7f3d0; }
+        .l-output  { background: rgba(49,46,129,0.5);   border-color: rgba(129,140,248,0.55);  color: #c7d2fe; }
+
+        .arrow {
+            font-size: 22px;
+            color: rgba(129,140,248,0.5);
+            line-height: 1;
+            margin: 6px 0;
+        }
+
+        /* Skip connection visual */
+        .skip-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 680px;
+        }
+
+        .skip-line {
+            position: absolute;
+            left: -36px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(180deg, rgba(192,132,252,0.0) 0%, rgba(192,132,252,0.6) 30%, rgba(192,132,252,0.6) 70%, rgba(192,132,252,0.0) 100%);
+            border-radius: 2px;
+        }
+
+        .skip-label {
+            position: absolute;
+            left: -80px;
+            top: 50%;
+            transform: translateY(-50%) rotate(-90deg);
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: rgba(192,132,252,0.55);
+            white-space: nowrap;
+        }
+
+        .badge {
             display: inline-block;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
         }
+
+        .badge-green  { background: rgba(74,222,128,0.2);  color: #4ade80; }
+        .badge-orange { background: rgba(251,146,60,0.2);  color: #fb923c; }
+        .badge-blue   { background: rgba(96,165,250,0.2);  color: #60a5fa; }
+        .badge-purple { background: rgba(192,132,252,0.2); color: #c084fc; }
+        .badge-teal   { background: rgba(52,211,153,0.2);  color: #34d399; }
+        .badge-indigo { background: rgba(129,140,248,0.2); color: #818cf8; }
+
+        .math-note {
+            width: 100%;
+            max-width: 680px;
+            background: rgba(15,23,42,0.6);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-top: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: rgba(255,255,255,0.45);
+            line-height: 2;
+        }
+
+        .math-note strong { color: rgba(255,255,255,0.7); }
     </style>
 </head>
-
 <body>
-    <button class="btn" onclick="downloadDiagram('graph_encoder.png')">📥 Download High-Res PNG</button>
-    <br>
-    <div class="diagram-container">
-        <div class="mermaid">
-            graph LR
-            %% Styles
-            classDef input fill:#8e44ad,color:#fff,stroke:#9b59b6,stroke-width:3px;
-            classDef layer fill:#16a085,color:#fff,stroke:#1abc9c,stroke-width:2px;
-            classDef agg fill:#d35400,color:#fff,stroke:#e67e22,stroke-width:2px;
-            classDef state fill:#2980b9,color:#fff,stroke:#3498db,stroke-width:3px;
+    <div class="page-title">SmellRL Architecture</div>
+    <div class="page-heading">GCN <span>Encoder</span></div>
 
-            InGraph[(Heterogeneous Graph <br /> Structure + 768-d Vectors)]:::input --> GCN1[GCN Layer 1 <br /> Initial
-            Feature Extraction]:::layer
-            GCN1 --> Agg{Neighborhood Aggregation <br /> Message Passing}:::agg
-            Agg --> GCN2[GCN Layer 2 <br /> Deep Feature Fusion]:::layer
-            GCN2 --> Latent((Latent State S_t <br /> 128-d Vector)):::state
+    <div class="card">
+        <div class="enc-flow">
+
+            <!-- Input -->
+            <div class="layer-block l-input">
+                <div class="layer-title">
+                    <span>📥</span> Input Graph
+                    <span class="badge badge-green">N × 783</span>
+                </div>
+                <div class="layer-sub">N nodes (1 class + M methods + F fields), each with 783-dim raw feature vector</div>
+                <div class="layer-dims" style="color:#4ade80;">x ∈ ℝ^{N×783}</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <!-- NodeFeatureFusion -->
+            <div class="layer-block l-fusion">
+                <div class="layer-title">
+                    <span>⚡</span> NodeFeatureFusion
+                    <span class="badge badge-orange">struct 15→96  ·  sem 768→32</span>
+                </div>
+                <div class="layer-sub">
+                    Structural MLP: Linear(15→48)→ReLU→Linear(48→96)→LayerNorm — 75% capacity<br>
+                    Semantic proj:  Linear(768→32)→LayerNorm — 25% capacity (3× less than structure)<br>
+                    Output: cat([struct_96, sem_32]) = 128 dims per node
+                </div>
+                <div class="layer-dims" style="color:#fb923c;">x ∈ ℝ^{N×128}</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <!-- GCN Layer 1 -->
+            <div class="layer-block l-gcn1">
+                <div class="layer-title">
+                    <span>🔷</span> GCNLayer 1  — Message Passing
+                    <span class="badge badge-blue">128 → 128</span>
+                </div>
+                <div class="layer-sub">
+                    D<sup>−½</sup> Â D<sup>−½</sup> X W  +  self-loop  →  ReLU<br>
+                    Aggregates 1-hop neighbourhood (class ↔ methods ↔ fields via CONTAINS, CALLS, ACCESSES)
+                </div>
+                <div class="layer-dims" style="color:#60a5fa;">h ∈ ℝ^{N×128}</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <!-- Norm + Dropout -->
+            <div class="layer-block l-norm" style="max-width:680px;">
+                <div class="layer-title">
+                    <span>🔘</span> LayerNorm(128)  ·  Dropout(0.1)
+                </div>
+                <div class="layer-sub">Batch-size agnostic normalisation · light stochastic regularisation</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <!-- Skip + GCN2 section -->
+            <div class="skip-wrapper">
+                <div class="skip-line"></div>
+                <div class="skip-label">skip connection</div>
+
+                <!-- GCN Layer 2 -->
+                <div class="layer-block l-gcn2">
+                    <div class="layer-title">
+                        <span>🔷</span> GCNLayer 2  — Deep Feature Fusion
+                        <span class="badge badge-blue">128 → 128</span>
+                    </div>
+                    <div class="layer-sub">
+                        Second round of message passing — captures 2-hop neighbourhoods<br>
+                        (e.g. field accessed by method called by another method)
+                    </div>
+                    <div class="layer-dims" style="color:#60a5fa;">h₂ ∈ ℝ^{N×128}</div>
+                </div>
+
+                <div class="arrow">↓  ⊕  skip_proj(x̃)  [Linear 128→128]</div>
+
+                <!-- Skip add + norm -->
+                <div class="layer-block l-skip">
+                    <div class="layer-title">
+                        <span>➕</span> Residual Add  +  LayerNorm(128)
+                        <span class="badge badge-purple">skip proj</span>
+                    </div>
+                    <div class="layer-sub">
+                        h₂ = h₂ + Linear(128→128)(x̃)  where x̃ = fused features from NodeFeatureFusion<br>
+                        Prevents gradient vanishing · allows raw structural features to bypass graph convolution
+                    </div>
+                    <div class="layer-dims" style="color:#c084fc;">h₂ ∈ ℝ^{N×128}</div>
+                </div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <!-- Attention Pooling -->
+            <div class="layer-block l-pool" style="max-width:680px;">
+                <div class="layer-title">
+                    <span>🎯</span> AttentionPooling  —  Graph Readout
+                    <span class="badge badge-teal">N×128 → 1×128</span>
+                </div>
+                <div class="layer-sub">
+                    w = σ(Linear(h₂, 1)) / Σw + ε  ·  z = Σ(wᵢ · h₂ᵢ)<br>
+                    Soft gate learns which nodes (class vs method vs field) most inform smell classification
+                </div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <!-- Output state -->
+            <div class="layer-block l-output" style="max-width:680px;">
+                <div class="layer-title">
+                    <span>✅</span> Graph Embedding  →  DQN State
+                    <span class="badge badge-indigo">1 × 128</span>
+                </div>
+                <div class="layer-sub">Fixed-size state vector encoding the entire class graph. Fed to DQNClassifier Q-network.</div>
+                <div class="layer-dims" style="color:#818cf8;">s ∈ ℝ^{1×128}</div>
+            </div>
+
+        </div>
+
+        <div class="math-note">
+            <strong>GCN convolution:</strong>  h = ReLU( W · (D<sup>−½</sup> Â D<sup>−½</sup> X) )  where  Â = A + I  (self-loops)<br>
+            <strong>Pooling:</strong>  z = Σᵢ ( σ(aᵢ) / Σσ(aⱼ) · hᵢ )   — soft attention readout<br>
+            <strong>Skip:</strong>  h₂_final = h₂ + skip_proj(x̃)   — residual from NodeFeatureFusion output
         </div>
     </div>
-
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    </script>
-    <script>
-        function downloadDiagram(filename) {
-            const svg = document.querySelector('.mermaid svg');
-            if (!svg) return alert('Rendering...');
-            const box = svg.getBoundingClientRect();
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const scale = 3; canvas.width = box.width * scale; canvas.height = box.height * scale;
-            const clonedSvg = svg.cloneNode(true); clonedSvg.setAttribute('width', box.width); clonedSvg.setAttribute('height', box.height);
-            const img = new Image();
-            img.onload = function () {
-                ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
-                const a = document.createElement('a'); a.download = filename; a.href = canvas.toDataURL('image/png'); a.click();
-            };
-            img.src = window.URL.createObjectURL(new Blob([(new XMLSerializer()).serializeToString(clonedSvg)], { type: 'image/svg+xml;charset=utf-8' }));
-        }
-    </script>
 </body>
-
 </html>
