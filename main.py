@@ -2,11 +2,14 @@
 SmellRL — main entry point.
 
 Usage:
-  python main.py                         # full pipeline (auto-resumes each stage)
-  python main.py --stage preprocess      # data preprocessing only
-  python main.py --stage pretrain        # GCN pre-training only
-  python main.py --stage train           # RL training only
-  python main.py --stage experiment      # run evaluation and ablation study
+  python main.py                          # full pipeline (supervised, auto-resumes)
+  python main.py --stage preprocess       # data preprocessing only
+  python main.py --stage train            # end-to-end supervised training (PRIMARY)
+  python main.py --stage experiment       # evaluation against baselines
+
+Ablation stages (for paper reproducibility):
+  python main.py --stage pretrain         # GCN pre-training ablation only
+  python main.py --stage train_dqn        # contextual-bandit DQN ablation
 
 Each stage automatically resumes from the latest checkpoint if one exists.
 Logs are written to logs/ (one file per run) and also printed to stdout.
@@ -24,10 +27,10 @@ import torch
 
 from src.utils      import setup_logger, get_device, CheckpointManager
 from src.data       import run_preprocessing, SmellDataset
-from src.models     import SmellDetectionAgent, GCNEncoder
-from src.training   import GCNPretrainer, DQNTrainer
-# Note: Ensure your evaluation.py has an ExperimentRunner or AblationRunner configured for the 5-class setup
-from src.evaluation import ExperimentRunner 
+from src.models     import SmellDetectionAgent, RGATEncoder, SupervisedSmellDetector
+from src.training   import GCNPretrainer, DQNTrainer, SupervisedTrainer
+from src.evaluation import ExperimentRunner
+
 
 # ──────────────────────────── Config ───────────────────────────────────────
 
@@ -45,42 +48,72 @@ def stage_preprocess(cfg: dict, log: logging.Logger):
     return train_ds, val_ds, test_ds
 
 
+def stage_supervised_train(
+    cfg: dict,
+    train_ds,
+    val_ds,
+    device: torch.device,
+    log: logging.Logger,
+) -> tuple:
+    """
+    PRIMARY training stage.
+
+    Trains RGATEncoder + linear classifier end-to-end with Focal Loss via
+    SupervisedTrainer.  Returns a SupervisedSmellDetector and training history.
+    """
+    log.info("══════════════ STAGE: supervised train (PRIMARY) ══════════════")
+    trainer  = SupervisedTrainer(cfg, device)
+    detector, history = trainer.train(train_ds, val_ds)
+    log.info("Supervised training complete.")
+    return detector, history
+
+
 def stage_pretrain_gcn(cfg: dict, train_ds, val_ds, device: torch.device, log: logging.Logger):
-    log.info("══════════════ STAGE: pretrain GCN ══════════════")
+    """Ablation: GCN/RGAT pre-training only (no DQN, no Focal end-to-end)."""
+    log.info("══════════════ STAGE: pretrain encoder (ablation) ══════════════")
     pretrainer = GCNPretrainer(cfg, device)
-    gcn = pretrainer.train(train_ds, val_ds)
-    log.info("GCN pre-training complete. Encoder ready.")
-    return gcn
+    enc = pretrainer.train(train_ds, val_ds)
+    log.info("Encoder pre-training complete.")
+    return enc
 
 
-def stage_train(cfg: dict, train_ds, val_ds, device: torch.device, log: logging.Logger):
-    log.info("══════════════ STAGE: train SmellRL ══════════════")
-    
-    # Dynamically detect feature dimension from the built dataset
-    feature_dim = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else cfg["ck_metrics"]["n_features"]
+def stage_train_dqn(
+    cfg: dict,
+    train_ds,
+    val_ds,
+    device: torch.device,
+    log: logging.Logger,
+) -> tuple:
+    """
+    Ablation: contextual-bandit DQN training.
+
+    Demonstrates why γ=0 DQN caps at ~50% accuracy on MLCQ vs. supervised
+    Focal Loss. Run with --stage train_dqn to reproduce the ablation results.
+    """
+    log.info("══════════════ STAGE: DQN train (ablation) ══════════════")
+    feature_dim = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else 783
     log.info(f"Detected node feature dimension: {feature_dim}")
-    
+
     agent = SmellDetectionAgent(cfg, feature_dim, device)
 
-    # Load pre-trained GCN weights if available
+    # Load pre-trained encoder weights if available
     gcn_ckpt = CheckpointManager(cfg["paths"]["checkpoint_dir"], "gcn_pretrain", log)
     payload  = gcn_ckpt.load_latest()
     if payload and "models" in payload and "gcn" in payload["models"]:
         agent.gcn.load_state_dict(payload["models"]["gcn"])
-        log.info("Loaded pre-trained GCN weights into agent")
+        log.info("Loaded pre-trained encoder weights into DQN agent")
     else:
-        log.warning("No pre-trained GCN checkpoint found — starting GCN from scratch")
+        log.warning("No pre-trained encoder checkpoint found — starting encoder from scratch")
 
     trainer = DQNTrainer(agent, cfg, device)
-    # The new DQNTrainer handles validation natively if configured
-    history = trainer.train(train_ds) 
-    log.info("SmellRL training complete.")
+    history = trainer.train(train_ds, val_ds)
+    log.info("DQN (ablation) training complete.")
     return agent, history
 
 
 def stage_experiment(
     cfg:        dict,
-    agent:      SmellDetectionAgent,
+    agent,                   # SupervisedSmellDetector or SmellDetectionAgent
     train_ds,
     test_ds,
     device:     torch.device,
@@ -88,17 +121,12 @@ def stage_experiment(
     training_histories: dict = None,
 ):
     log.info("══════════════ STAGE: run experiments ══════════════")
-    
-    # Instantiate the runner (assuming evaluation.py has been updated to remove flat_dqn)
-    # Fallback to standard instantiation depending on your specific evaluation.py signature
     try:
-        runner = ExperimentRunner(agent, train_ds, test_ds, cfg, device)
+        runner  = ExperimentRunner(agent, train_ds, test_ds, cfg, device)
         results = runner.run_all(training_histories)
     except TypeError:
-        # If evaluation.py still requires a second agent argument (like flat_dqn), pass None
-        runner = ExperimentRunner(agent, None, train_ds, test_ds, cfg, device)
+        runner  = ExperimentRunner(agent, None, train_ds, test_ds, cfg, device)
         results = runner.run_all(training_histories)
-        
     log.info("All experiments complete. Results saved to data/results/")
     return results
 
@@ -107,42 +135,82 @@ def stage_experiment(
 
 def run_all(cfg: dict, device: torch.device, log: logging.Logger):
     """
-    Runs all stages in order.  Each stage is independently resumable.
+    Runs the primary pipeline in order:
+      1. Preprocess  (with severity filter + edge_type v2 graph schema)
+      2. Train       (SupervisedTrainer — Focal Loss, RGAT encoder)
+      3. Experiment  (baseline comparison + per-class F1)
+
+    Ablation stages (pretrain, train_dqn) are accessible individually via --stage.
     """
     # 1. Preprocess
     train_ds, val_ds, test_ds = stage_preprocess(cfg, log)
 
-    # 2. GCN pre-train
-    stage_pretrain_gcn(cfg, train_ds, val_ds, device, log)
+    # 2. Supervised training (PRIMARY — replaces DQN as primary pipeline)
+    detector, history = stage_supervised_train(cfg, train_ds, val_ds, device, log)
 
-    # 3. Train SmellRL
-    agent, history = stage_train(cfg, train_ds, val_ds, device, log)
-
-    # 4. Experiments
-    histories = {
-        "SmellRL":  history,
-    }
-    stage_experiment(cfg, agent, train_ds, test_ds, device, log, histories)
+    # 3. Experiments
+    histories = {"SmellRL-Supervised": history}
+    stage_experiment(cfg, detector, train_ds, test_ds, device, log, histories)
 
 
-# ──────────────────────────── Load trained models for experiment-only run ──
+# ──────────────────────────── Checkpoint loaders ───────────────────────────
 
-def _load_agent(cfg: dict, train_ds: SmellDataset, device: torch.device, log: logging.Logger) -> SmellDetectionAgent:
-    feature_dim = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else cfg["ck_metrics"]["n_features"]
-    agent   = SmellDetectionAgent(cfg, feature_dim, device)
-    
-    ckpt_mgr = CheckpointManager(cfg["paths"]["checkpoint_dir"], "smellrl", log)
+def _load_supervised_detector(
+    cfg: dict,
+    train_ds: SmellDataset,
+    device: torch.device,
+    log: logging.Logger,
+) -> SupervisedSmellDetector:
+    """Load a saved SupervisedSmellDetector from the latest checkpoint."""
+    import torch.nn as nn
+
+    feature_dim  = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else 783
+    gcn_cfg      = cfg["gcn"]
+    n_classes    = cfg["smells"]["n_classes"]
+
+    encoder = RGATEncoder(
+        in_ch=feature_dim,
+        hidden=gcn_cfg["hidden_dim"],
+        out_ch=gcn_cfg["output_dim"],
+        num_edge_types=gcn_cfg.get("num_edge_types", 3),
+        num_heads=gcn_cfg.get("num_heads", 4),
+        dropout=gcn_cfg["dropout"],
+    )
+    classifier = nn.Linear(gcn_cfg["output_dim"], n_classes)
+
+    ckpt_mgr = CheckpointManager(cfg["paths"]["checkpoint_dir"], "supervised", log)
+    payload  = ckpt_mgr.load_latest()
+    if payload and "models" in payload:
+        if "encoder" in payload["models"]:
+            encoder.load_state_dict(payload["models"]["encoder"])
+            classifier.load_state_dict(payload["models"]["classifier"])
+            log.info("SupervisedSmellDetector loaded from checkpoint.")
+        else:
+            log.warning("Checkpoint found but missing 'encoder' key — using untrained model")
+    else:
+        log.warning("No supervised checkpoint found — using untrained model for experiments")
+
+    return SupervisedSmellDetector(encoder, classifier, n_classes, device)
+
+
+def _load_dqn_agent(
+    cfg: dict,
+    train_ds: SmellDataset,
+    device: torch.device,
+    log: logging.Logger,
+) -> SmellDetectionAgent:
+    """Load a saved SmellDetectionAgent (DQN ablation) from the latest checkpoint."""
+    feature_dim = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else 783
+    agent       = SmellDetectionAgent(cfg, feature_dim, device)
+
+    ckpt_mgr = CheckpointManager(cfg["paths"]["checkpoint_dir"], "smellrl_dqn", log)
     payload  = ckpt_mgr.load_latest()
     if payload:
-        # Depending on how the new DQNTrainer saves the agent
         if "models" in payload and "agent" in payload["models"]:
             agent.load_state_dict(payload["models"]["agent"])
-        elif "models" in payload and "q" in payload["models"]:
-            agent.q.load_state_dict(payload["models"]["q"])
-            agent.gcn.load_state_dict(payload["models"]["gcn"])
-        log.info("SmellRL agent loaded from checkpoint.")
+        log.info("SmellDetectionAgent (DQN ablation) loaded from checkpoint.")
     else:
-        log.warning("No SmellRL checkpoint found — using untrained agent for experiments")
+        log.warning("No DQN checkpoint found — using untrained agent")
     return agent
 
 
@@ -151,8 +219,8 @@ def _load_training_history(results_dir: str, log: logging.Logger) -> dict:
     if os.path.exists(path):
         with open(path) as f:
             history = json.load(f)
-        log.info(f"Loaded SmellRL training history ({len(history)} episodes)")
-        return {"SmellRL": history}
+        log.info(f"Loaded training history ({len(history)} entries)")
+        return {"SmellRL-Supervised": history}
     log.warning("No training history file found.")
     return {}
 
@@ -161,24 +229,35 @@ def _load_training_history(results_dir: str, log: logging.Logger) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Semantic-Aware SmellRL: GCN + DQN for Code Smell Detection"
+        description="SmellRL: RGAT + Focal Loss for Code Smell Detection"
     )
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     parser.add_argument(
         "--stage",
         default="all",
-        choices=["all", "preprocess", "pretrain", "train", "experiment"],
-        help="Pipeline stage to run (default: all)",
+        choices=[
+            "all",          # PRIMARY: preprocess → supervised train → experiment
+            "preprocess",
+            "train",        # PRIMARY: SupervisedTrainer (Focal Loss + RGAT)
+            "experiment",
+            # ── Ablation stages ──────────────────────────────────────────────
+            "pretrain",     # ABLATION: encoder-only pre-training
+            "train_dqn",    # ABLATION: contextual-bandit DQN
+        ],
+        help=(
+            "Pipeline stage to run (default: all). "
+            "Use 'train' for the primary supervised pipeline. "
+            "Use 'train_dqn' / 'pretrain' for ablation baselines."
+        ),
     )
     args = parser.parse_args()
 
-    # ── Config & logging ──────────────────────────────────────────────────
     cfg    = load_config(args.config)
     device = get_device(cfg.get("device", "auto"))
     log    = setup_logger("SmellRL", cfg["paths"]["log_dir"])
 
     log.info("╔══════════════════════════════════════════════════╗")
-    log.info("║          Semantic-Aware SmellRL Pipeline         ║")
+    log.info("║     SmellRL  —  RGAT + Focal Loss Pipeline      ║")
     log.info("╚══════════════════════════════════════════════════╝")
     log.info(f"Config: {args.config}")
     log.info(f"Stage:  {args.stage}")
@@ -186,26 +265,31 @@ def main():
     if device.type == "cuda":
         log.info(f"GPU: {torch.cuda.get_device_name(device)}")
 
-    # ── Dispatch ──────────────────────────────────────────────────────────
+    # ── Dispatch ─────────────────────────────────────────────────────────
     if args.stage == "all":
         run_all(cfg, device, log)
 
     elif args.stage == "preprocess":
         stage_preprocess(cfg, log)
 
+    elif args.stage == "train":
+        train_ds, val_ds, _ = stage_preprocess(cfg, log)
+        stage_supervised_train(cfg, train_ds, val_ds, device, log)
+
+    elif args.stage == "experiment":
+        train_ds, _, test_ds = stage_preprocess(cfg, log)
+        detector   = _load_supervised_detector(cfg, train_ds, device, log)
+        histories  = _load_training_history(cfg["paths"]["results_dir"], log)
+        stage_experiment(cfg, detector, train_ds, test_ds, device, log, histories)
+
+    # ── Ablation stages ──────────────────────────────────────────────────
     elif args.stage == "pretrain":
         train_ds, val_ds, _ = stage_preprocess(cfg, log)
         stage_pretrain_gcn(cfg, train_ds, val_ds, device, log)
 
-    elif args.stage == "train":
+    elif args.stage == "train_dqn":
         train_ds, val_ds, _ = stage_preprocess(cfg, log)
-        stage_train(cfg, train_ds, val_ds, device, log)
-
-    elif args.stage == "experiment":
-        train_ds, _, test_ds = stage_preprocess(cfg, log)
-        agent = _load_agent(cfg, train_ds, device, log)
-        histories = _load_training_history(cfg["paths"]["results_dir"], log)
-        stage_experiment(cfg, agent, train_ds, test_ds, device, log, histories)
+        stage_train_dqn(cfg, train_ds, val_ds, device, log)
 
     log.info("Done.")
 

@@ -18,6 +18,11 @@ dataset:
                        # smell class, so the agent still sees enough clean code to avoid
                        # over-flagging healthy code at test time. Set to 1.0 to restore the
                        # old 1:1 behavior.
+  filter_minor_severity: true   # Drop rows where severity == "minor" to eliminate label noise.
+                                 # Human inter-rater disagreement concentrates in minor smells;
+                                 # removing them sharpens the decision boundary significantly.
+  data_version: "v2"            # Bump to invalidate stale .pt caches when schema changes.
+                                 # v2 adds edge_type tensor + drops minor-severity rows.
 
 smells:
   classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
@@ -51,6 +56,12 @@ gcn:
   use_attention_pool: true
   use_residual: true
   use_layernorm: true
+  # ── Relational Graph Attention upgrade ───────────────────────────────
+  encoder_type: "rgat"   # "rgat" (default) | "gcn" (legacy ablation)
+                          # rgat learns separate attention per edge type;
+                          # gcn treats all edges identically (old baseline).
+  num_edge_types: 3       # CONTAINS=0, CALLS=1, ACCESSES_FIELD=2
+  num_heads: 4            # Multi-head attention heads in each RGATLayer
 
 dqn:
   hidden_layers: [256, 128, 64]
@@ -71,10 +82,25 @@ dqn:
   gamma: 0.0  # 0.0 because it's a single-step episodic task
 
 gcn_pretrain:
-  epochs: 50
+  epochs: 100              # Increased from 50; filtered dataset is smaller so more epochs needed
   learning_rate: 0.001
   batch_size: 32
   checkpoint_freq: 10
+  # ── Loss function (ablation pre-trainer) ────────────────────────────
+  loss: "focal"            # "focal" | "cross_entropy"
+  focal_gamma: 2.0         # Focusing parameter γ: 0=CE, 2=standard focal (RetinaNet default)
+
+# ── Supervised Training (PRIMARY pipeline, replaces DQN) ──────────────────
+# DQNTrainer is retained in training.py as an ablation baseline only.
+supervised_train:
+  epochs: 150
+  learning_rate: 3.0e-4
+  batch_size: 32
+  weight_decay: 1.0e-5
+  checkpoint_freq: 25
+  early_stopping_patience: 20   # Stop if val_acc doesn't improve for N eval cycles
+  focal_gamma: 2.0
+  eval_freq: 10                  # Validate every N epochs
 
 experiments:
   variants:

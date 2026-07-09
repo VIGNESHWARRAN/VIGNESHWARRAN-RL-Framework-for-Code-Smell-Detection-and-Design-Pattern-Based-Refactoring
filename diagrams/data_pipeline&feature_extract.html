@@ -1,430 +1,413 @@
+Here is a full-width, landscape-oriented version of the Data Pipeline & Feature Extraction diagram.
+
+To utilize the complete page width (ideal for a desktop view, a presentation slide, or a wide web layout), I have
+completely re-engineered the layout from a vertical cascade into a **horizontal Left-to-Right pipeline**. This design
+uses CSS Flexbox and Grid to stretch across the screen, allowing each major stage to sit side-by-side without feeling
+cramped.
+
+Save this as an `.html` file and open it in a maximized browser window.
+
+```html
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmellRL – Data Pipeline & Feature Extraction</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>SmellRL - Full Width Architecture Diagram</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f8f9fc;
+            color: #1e293b;
+            padding: 40px;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 40px 24px;
         }
 
-        .page-title {
-            color: #e2e8f0;
-            font-size: 13px;
-            font-weight: 500;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-            opacity: 0.6;
-        }
-
-        .page-heading {
-            color: #f8fafc;
-            font-size: 26px;
-            font-weight: 700;
-            margin-bottom: 36px;
+        .header {
             text-align: center;
-        }
-
-        .page-heading span {
-            background: linear-gradient(90deg, #818cf8, #a78bfa, #c084fc);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .card {
-            background: rgba(255,255,255,0.05);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 20px;
-            padding: 36px 40px;
+            margin-bottom: 40px;
             width: 100%;
-            max-width: 960px;
         }
 
-        /* ── Pipeline row layout ── */
-        .pipeline {
-            display: flex;
-            flex-direction: column;
-            gap: 0;
+        .header h1 {
+            font-size: 28px;
+            color: #0f172a;
+            margin-bottom: 8px;
         }
 
-        .stage {
+        .header p {
+            font-size: 14px;
+            color: #64748b;
+        }
+
+        /* ── Full Width Container ── */
+        .pipeline-container {
+            width: 100%;
+            max-width: 1600px;
+            /* Covers wide screens */
             display: flex;
             align-items: stretch;
-            gap: 0;
-            position: relative;
+            justify-content: space-between;
+            gap: 20px;
         }
 
-        .stage-label {
-            width: 110px;
-            flex-shrink: 0;
+        /* ── Connector Arrows ── */
+        .arrow-col {
             display: flex;
             align-items: center;
-            justify-content: flex-end;
-            padding-right: 14px;
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            color: rgba(255,255,255,0.35);
+            justify-content: center;
+            flex-shrink: 0;
+            color: #cbd5e1;
+            font-size: 32px;
+            font-weight: 300;
         }
 
-        .connector-col {
-            width: 2px;
-            flex-shrink: 0;
+        /* ── Stage Columns ── */
+        .stage-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
             position: relative;
         }
 
-        .connector-col .line {
-            position: absolute;
-            left: 0;
-            width: 2px;
-            background: linear-gradient(180deg, rgba(129,140,248,0.6) 0%, rgba(167,139,250,0.3) 100%);
+        /* Accent bars at the top of each column */
+        .stage-col[data-stage="1"] {
+            border-top: 5px solid #3b82f6;
         }
 
-        .connector-col .dot {
-            position: absolute;
-            left: -5px;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: #818cf8;
-            box-shadow: 0 0 12px rgba(129,140,248,0.8);
+        /* Blue */
+        .stage-col[data-stage="2"] {
+            border-top: 5px solid #8b5cf6;
+        }
+
+        /* Purple */
+        .stage-col[data-stage="3"] {
+            border-top: 5px solid #f59e0b;
+        }
+
+        /* Orange */
+        .stage-col[data-stage="4"] {
+            border-top: 5px solid #10b981;
+        }
+
+        /* Green */
+
+        .stage-header {
+            padding: 20px 24px 16px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .stage-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 6px;
+        }
+
+        .stage-desc {
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.5;
         }
 
         .stage-body {
-            flex: 1;
-            padding: 0 0 0 24px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            height: 100%;
         }
 
-        /* ── Node boxes ── */
+        /* ── Inner Nodes & Cards ── */
         .node {
-            border-radius: 12px;
-            padding: 14px 18px;
-            margin: 12px 0;
-            border: 1px solid;
-            position: relative;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
         }
 
         .node-title {
             font-size: 13px;
             font-weight: 600;
-            margin-bottom: 3px;
+            margin-bottom: 4px;
         }
 
         .node-sub {
             font-size: 11px;
-            opacity: 0.7;
-            line-height: 1.5;
-        }
-
-        .node.input {
-            background: rgba(51,65,85,0.6);
-            border-color: rgba(100,116,139,0.4);
-            color: #cbd5e1;
-        }
-
-        .node.parse {
-            background: rgba(30,58,138,0.4);
-            border-color: rgba(96,165,250,0.35);
-            color: #bfdbfe;
-        }
-
-        .node.graph {
-            background: rgba(20,83,45,0.4);
-            border-color: rgba(74,222,128,0.35);
-            color: #bbf7d0;
-        }
-
-        .node.fusion-struct {
-            background: rgba(124,45,18,0.5);
-            border-color: rgba(251,146,60,0.4);
-            color: #fed7aa;
-        }
-
-        .node.fusion-sem {
-            background: rgba(88,28,135,0.4);
-            border-color: rgba(192,132,252,0.4);
-            color: #e9d5ff;
-        }
-
-        .node.fused {
-            background: rgba(6,78,59,0.5);
-            border-color: rgba(52,211,153,0.45);
-            color: #a7f3d0;
-        }
-
-        .node.output {
-            background: rgba(49,46,129,0.5);
-            border-color: rgba(129,140,248,0.5);
-            color: #c7d2fe;
-        }
-
-        /* ── Feature breakdown grid ── */
-        .feat-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin: 14px 0;
-        }
-
-        .feat-card {
-            border-radius: 10px;
-            padding: 12px 14px;
-            border: 1px solid;
-        }
-
-        .feat-card .dims {
-            font-size: 20px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            line-height: 1;
-        }
-
-        .feat-card .feat-label {
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            margin-top: 4px;
-        }
-
-        .feat-card .feat-desc {
-            font-size: 10px;
-            opacity: 0.65;
-            margin-top: 3px;
+            color: #475569;
             line-height: 1.4;
         }
 
-        .feat-card.type { background: rgba(15,23,42,0.5); border-color: rgba(100,116,139,0.4); color: #94a3b8; }
-        .feat-card.ck   { background: rgba(30,58,138,0.3); border-color: rgba(96,165,250,0.3); color: #93c5fd; }
-        .feat-card.du   { background: rgba(124,45,18,0.3); border-color: rgba(251,146,60,0.3); color: #fdba74; }
-        .feat-card.sem  { background: rgba(88,28,135,0.3); border-color: rgba(192,132,252,0.3); color: #d8b4fe; }
+        code {
+            font-family: 'Courier New', Courier, monospace;
+            background: #e2e8f0;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-size: 10px;
+        }
 
-        /* ── Fusion diagram ── */
-        .fusion-row {
-            display: flex;
+        /* ── Feature Grid (Stage 2) ── */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
-            align-items: center;
-            margin: 14px 0;
         }
 
-        .fusion-in {
+        .feat-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        }
+
+        .feat-top {
             display: flex;
-            flex-direction: column;
-            gap: 8px;
-            flex: 1;
-        }
-
-        .fusion-arrow-col {
-            display: flex;
-            flex-direction: column;
+            justify-content: space-between;
             align-items: center;
-            gap: 4px;
-            color: rgba(255,255,255,0.3);
-            font-size: 18px;
+            margin-bottom: 6px;
         }
 
-        .fusion-out {
-            flex: 0.6;
+        .feat-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #334155;
         }
 
         .dim-badge {
-            display: inline-block;
             font-size: 10px;
             font-weight: 700;
-            border-radius: 4px;
-            padding: 2px 7px;
-            letter-spacing: 0.5px;
-        }
-        .dim-badge.struct { background: rgba(251,146,60,0.25); color: #fdba74; border: 1px solid rgba(251,146,60,0.3); }
-        .dim-badge.sem    { background: rgba(192,132,252,0.2); color: #d8b4fe; border: 1px solid rgba(192,132,252,0.25); }
-        .dim-badge.fused  { background: rgba(52,211,153,0.2);  color: #6ee7b7; border: 1px solid rgba(52,211,153,0.3); }
-
-        .arrow-down {
-            text-align: center;
-            color: rgba(129,140,248,0.5);
-            font-size: 20px;
-            line-height: 1;
-            margin: 4px 0;
+            background: #f1f5f9;
+            color: #64748b;
+            padding: 2px 6px;
+            border-radius: 12px;
         }
 
-        .section-divider {
-            border: none;
-            border-top: 1px solid rgba(255,255,255,0.08);
-            margin: 20px 0;
-        }
-
-        .section-header {
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: rgba(255,255,255,0.3);
-            margin-bottom: 14px;
-        }
-
-        .edge-types {
+        /* ── Edges Container ── */
+        .edges-container {
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 8px;
+            background: #f8fafc;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px dashed #cbd5e1;
         }
 
-        .edge-pill {
+        .edge-row {
+            font-size: 11px;
+            color: #334155;
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 20px;
-            border: 1px solid;
-            font-size: 11px;
-            font-weight: 500;
+            gap: 8px;
         }
 
-        .edge-pill.contains { border-color: rgba(96,165,250,0.4);  color: #93c5fd; background: rgba(30,58,138,0.3); }
-        .edge-pill.calls    { border-color: rgba(74,222,128,0.4);  color: #86efac; background: rgba(20,83,45,0.3); }
-        .edge-pill.accesses { border-color: rgba(251,146,60,0.4);  color: #fdba74; background: rgba(124,45,18,0.3); }
-
-        .edge-dot {
-            width: 8px; height: 8px; border-radius: 50%;
+        .edge-row span {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 10px;
+            background: #e2e8f0;
+            padding: 2px 6px;
+            border-radius: 4px;
         }
-        .edge-dot.contains { background: #60a5fa; }
-        .edge-dot.calls    { background: #4ade80; }
-        .edge-dot.accesses { background: #fb923c; }
+
+        /* ── Fusion Layout (Stage 3) ── */
+        .fusion-path {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+        }
+
+        .fusion-operator {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #94a3b8;
+            font-size: 20px;
+        }
+
+        .fusion-operator span {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        .fused-node {
+            background: #ecfdf5;
+            border: 1px solid #10b981;
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+            margin-top: auto;
+        }
     </style>
 </head>
+
 <body>
-    <div class="page-title">SmellRL Pipeline</div>
-    <div class="page-heading">Data Pipeline & <span>Feature Extraction</span></div>
 
-    <div class="card">
-        <div class="pipeline">
-
-            <!-- Stage 0 -->
-            <div class="stage">
-                <div class="stage-label">Stage 0</div>
-                <div class="node input" style="flex:1; margin-left:24px;">
-                    <div class="node-title">📄 Raw MLCQ CSV</div>
-                    <div class="node-sub">Java source code + smell labels (GodClass, FeatureEnvy, LongMethod, DataClass, NoSmell)</div>
-                </div>
-            </div>
-
-            <div class="arrow-down">↓</div>
-
-            <!-- Stage 1 — Parse -->
-            <div class="stage">
-                <div class="stage-label">Stage 1</div>
-                <div class="node parse" style="flex:1; margin-left:24px;">
-                    <div class="node-title">🔬 AST Parse Validation &amp; Class Balancing</div>
-                    <div class="node-sub"><code>javalang</code> via <code>ProcessPoolExecutor</code> — rows failing parse are discarded (cached to <code>_parseable.csv</code>). NoSmell downsampled at ratio 3.0×</div>
-                </div>
-            </div>
-
-            <div class="arrow-down">↓</div>
-
-            <!-- Stage 2 — Graph nodes -->
-            <div class="stage">
-                <div class="stage-label">Stage 2</div>
-                <div style="flex:1; margin-left:24px;">
-                    <div class="node graph">
-                        <div class="node-title">🌐 Heterogeneous AST Graph Construction</div>
-                        <div class="node-sub">3 node types: Class (idx 0) · Method (idx 1…M) · Field (idx M+1…M+F)</div>
-                    </div>
-
-                    <hr class="section-divider">
-
-                    <div class="section-header">783-Dimensional Node Feature Vector</div>
-                    <div class="feat-grid">
-                        <div class="feat-card type">
-                            <div class="dims">3</div>
-                            <div class="feat-label">Node Type</div>
-                            <div class="feat-desc">One-hot [Class | Method | Field]</div>
-                        </div>
-                        <div class="feat-card ck">
-                            <div class="dims">6</div>
-                            <div class="feat-label">CK Metrics</div>
-                            <div class="feat-desc">WMC, DIT, NOC, CBO, RFC, LOC (normalised)</div>
-                        </div>
-                        <div class="feat-card du">
-                            <div class="dims">6</div>
-                            <div class="feat-label">Data-Usage</div>
-                            <div class="feat-desc">Field access, method calls, external objects, ratios</div>
-                        </div>
-                        <div class="feat-card sem">
-                            <div class="dims">768</div>
-                            <div class="feat-label">GraphCodeBERT</div>
-                            <div class="feat-desc">CLS-token embedding (microsoft/graphcodebert-base)</div>
-                        </div>
-                    </div>
-
-                    <hr class="section-divider">
-
-                    <div class="section-header">Heterogeneous Edge Types</div>
-                    <div class="edge-types">
-                        <div class="edge-pill contains"><span class="edge-dot contains"></span>CONTAINS — Class ↔ Method, Class ↔ Field</div>
-                        <div class="edge-pill calls"><span class="edge-dot calls"></span>CALLS — Method A → Method B (same class)</div>
-                        <div class="edge-pill accesses"><span class="edge-dot accesses"></span>ACCESSES_FIELD — Method A → Field F</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="arrow-down">↓</div>
-
-            <!-- Stage 3 — NodeFeatureFusion -->
-            <div class="stage">
-                <div class="stage-label">Stage 3</div>
-                <div style="flex:1; margin-left:24px;">
-                    <div class="section-header">NodeFeatureFusion  —  3× Structural Priority</div>
-                    <div class="fusion-row">
-                        <div class="fusion-in">
-                            <div class="node fusion-struct">
-                                <span class="dim-badge struct">15 → 96 dims</span>
-                                <div class="node-title" style="margin-top:8px;">Structural Branch  (MLP)</div>
-                                <div class="node-sub">Linear(15→48) → ReLU → Linear(48→96) → LayerNorm<br>Captures non-linear CK × data-usage interactions</div>
-                            </div>
-                            <div class="node fusion-sem">
-                                <span class="dim-badge sem">768 → 32 dims</span>
-                                <div class="node-title" style="margin-top:8px;">Semantic Branch  (Projection)</div>
-                                <div class="node-sub">Linear(768→32) → LayerNorm<br>Compresses pre-trained GraphCodeBERT space</div>
-                            </div>
-                        </div>
-                        <div class="fusion-arrow-col">
-                            <div style="font-size:28px; color:rgba(52,211,153,0.6);">→</div>
-                            <div style="font-size:10px; color:rgba(255,255,255,0.3); writing-mode:vertical-lr; letter-spacing:2px;">concat</div>
-                        </div>
-                        <div class="fusion-out">
-                            <div class="node fused" style="margin:0;">
-                                <span class="dim-badge fused">128 dims</span>
-                                <div class="node-title" style="margin-top:8px;">Fused Node Features</div>
-                                <div class="node-sub">[struct_96 | sem_32] — balanced representation per node. Structure holds 75% of the capacity.</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="arrow-down">↓</div>
-
-            <!-- Output -->
-            <div class="stage">
-                <div class="stage-label">Output</div>
-                <div class="node output" style="flex:1; margin-left:24px;">
-                    <div class="node-title">✅ Attributed Heterogeneous Graph</div>
-                    <div class="node-sub"><strong>x:</strong> [N × 128]  ·  <strong>edge_index:</strong> [2 × E]  ·  <strong>y:</strong> smell label  → serialised to <code>data/processed/{train,val,test}.pt</code></div>
-                </div>
-            </div>
-
-        </div>
+    <div class="header">
+        <h1>SmellRL Data Pipeline & Feature Extraction</h1>
+        <p>End-to-end data flow from raw CSV to the 128-dimensional Attributed Heterogeneous Graph Tensor</p>
     </div>
+
+    <div class="pipeline-container">
+
+        <div class="stage-col" data-stage="1">
+            <div class="stage-header">
+                <div class="stage-title">1. Data Preparation</div>
+                <div class="stage-desc">Ingestion, validation, and balancing</div>
+            </div>
+            <div class="stage-body">
+                <div class="node">
+                    <div class="node-title">Raw MLCQ CSV</div>
+                    <div class="node-sub">Java source code matched with expert-annotated structural and semantic smell
+                        labels.</div>
+                </div>
+                <div style="text-align: center; color: #cbd5e1;">↓</div>
+                <div class="node">
+                    <div class="node-title">AST Parse Validation</div>
+                    <div class="node-sub">Parallel processing via <code>javalang</code>. Unparseable rows are filtered
+                        and cached to disk.</div>
+                </div>
+                <div style="text-align: center; color: #cbd5e1;">↓</div>
+                <div class="node">
+                    <div class="node-title">Class Balancing</div>
+                    <div class="node-sub"><i>NoSmell</i> instances are dynamically downsampled (3.0× ratio) to prevent
+                        severe class imbalance during RL.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-col">→</div>
+
+        <div class="stage-col" data-stage="2" style="flex: 1.5;">
+            <div class="stage-header">
+                <div class="stage-title">2. Heterogeneous Graph Construction</div>
+                <div class="stage-desc">783-dimensional node features & structural edges</div>
+            </div>
+            <div class="stage-body">
+                <div class="feature-grid">
+                    <div class="feat-card">
+                        <div class="feat-top">
+                            <span class="feat-name">Node Type</span>
+                            <span class="dim-badge">3 dims</span>
+                        </div>
+                        <div class="node-sub">One-hot encoding for Class (0), Method (1..M), or Field (M+1..M+F).</div>
+                    </div>
+                    <div class="feat-card">
+                        <div class="feat-top">
+                            <span class="feat-name">CK Metrics</span>
+                            <span class="dim-badge">6 dims</span>
+                        </div>
+                        <div class="node-sub">Normalized structural data: WMC, DIT, NOC, CBO, RFC, LOC.</div>
+                    </div>
+                    <div class="feat-card">
+                        <div class="feat-top">
+                            <span class="feat-name">Data Usage</span>
+                            <span class="dim-badge">6 dims</span>
+                        </div>
+                        <div class="node-sub">Frequencies of field accesses, method calls, and external objects.</div>
+                    </div>
+                    <div class="feat-card">
+                        <div class="feat-top">
+                            <span class="feat-name">Semantic</span>
+                            <span class="dim-badge">768 dims</span>
+                        </div>
+                        <div class="node-sub">[CLS] token extracted via <code>microsoft/graphcodebert-base</code>.</div>
+                    </div>
+                </div>
+
+                <div class="edges-container">
+                    <div style="font-size: 12px; font-weight: 600; margin-bottom: 4px;">Heterogeneous Edges:</div>
+                    <div class="edge-row"><span>CONTAINS</span> Class ↔ Methods & Fields</div>
+                    <div class="edge-row"><span>CALLS</span> Method → Method</div>
+                    <div class="edge-row"><span>ACCESSES</span> Method → Field</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-col">→</div>
+
+        <div class="stage-col" data-stage="3">
+            <div class="stage-header">
+                <div class="stage-title">3. Feature Fusion</div>
+                <div class="stage-desc">Asymmetric compression to prioritize structure</div>
+            </div>
+            <div class="stage-body" style="justify-content: space-between;">
+
+                <div style="display: flex; gap: 12px;">
+                    <div class="node" style="flex: 1;">
+                        <div class="node-title">Structural Branch</div>
+                        <div class="node-sub" style="margin-bottom: 8px;">Linear(15→48) → ReLU → Linear(48→96)</div>
+                        <span class="dim-badge" style="background:#fef3c7; color:#d97706;">96 dims</span>
+                    </div>
+
+                    <div class="node" style="flex: 1;">
+                        <div class="node-title">Semantic Branch</div>
+                        <div class="node-sub" style="margin-bottom: 8px;">Linear(768→32) → LayerNorm</div>
+                        <span class="dim-badge" style="background:#fef3c7; color:#d97706;">32 dims</span>
+                    </div>
+                </div>
+
+                <div class="fusion-operator">
+                    ↓ ⊕ ↓
+                    <span>Concat</span>
+                </div>
+
+                <div class="fused-node">
+                    <div class="node-title" style="color: #065f46; font-size: 15px;">Fused Node Vector</div>
+                    <div class="node-sub" style="color: #047857; margin-top: 6px;"><b>128 dimensions</b> per
+                        node.<br>(75% structural capacity)</div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="arrow-col">→</div>
+
+        <div class="stage-col" data-stage="4" style="flex: 0.8;">
+            <div class="stage-header">
+                <div class="stage-title">4. Output</div>
+                <div class="stage-desc">Serialization to disk</div>
+            </div>
+            <div class="stage-body" style="justify-content: center;">
+                <div class="node" style="border-color: #10b981; background: #f0fdf4;">
+                    <div class="node-title">Attributed Graph Tensor</div>
+                    <div class="node-sub" style="margin-top: 12px;">
+                        <b>X:</b> <code>[N × 128]</code><br><br>
+                        <b>edge_index:</b> <code>[2 × E]</code><br><br>
+                        <b>y:</b> <code>Smell Label</code>
+                    </div>
+                    <div class="node-sub" style="margin-top: 16px; font-style: italic;">
+                        Saved as .pt files for GCN Pre-training and DQN execution.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
 </body>
+
 </html>
+
+```

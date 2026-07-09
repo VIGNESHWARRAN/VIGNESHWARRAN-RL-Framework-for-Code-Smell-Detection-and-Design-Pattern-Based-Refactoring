@@ -10,6 +10,20 @@ from src.embeddings import SemanticEmbedder
 
 logger = logging.getLogger("SmellRL.data")
 
+# ────────────────────────── Edge-type Registry ──────────────────────────
+# Integer codes stored in the edge_type tensor (shape [E], dtype=long).
+# RGATLayer learns a separate W_r and attention vector a_r for each code.
+EDGE_TYPE = {
+    "CONTAINS":       0,   # class → method, class → field (bidirectional, same type)
+    "CALLS":          1,   # method → method (intra-class invocation)
+    "ACCESSES_FIELD": 2,   # method → field  (read/write access)
+}
+NUM_EDGE_TYPES = 3        # must match gcn.num_edge_types in config.yaml
+
+# Schema version — bump whenever the graph dict layout changes so stale
+# .pt caches are detected automatically in run_preprocessing().
+DATA_VERSION = "v3"
+
 # ──────────────────────────── Constants ────────────────────────────────────
 
 SMELL_CLASSES  = ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
@@ -69,80 +83,164 @@ def _normalize_smell(raw: str) -> Optional[str]:
     return _SMELL_ALIASES.get(str(raw).strip().lower())
 
 def check_single_code(code_str: str) -> bool:
-    if not code_str or code_str.strip() == "":
+    """
+    Two-tier Java code validation.
+
+    Tier 1 — strict javalang parse: accepts full compilation units.
+    Tier 2 — dummy-class wrap: accepts method/field snippets by wrapping them.
+
+    Returns True only if the code can be successfully parsed into a tree by javalang.
+    """
+    if not code_str or len(code_str.strip()) < 5:
         return False
+
+    import javalang  # imported locally so multiprocessing workers can find it
+
+    # Tier 1: full compilation unit (class-level snippets)
     try:
-        import javalang
         tree = javalang.parse.parse(code_str)
         return bool(tree.types)
     except Exception:
-        return False
+        pass
 
-def load_mlcq(csv_path: str, nosmell_ratio: float = 1.0) -> pd.DataFrame:
+    # Tier 2: wrap in dummy class (method/field snippets)
+    try:
+        javalang.parse.parse(f"class _D {{ {code_str} }}")
+        return True
+    except Exception:
+        pass
+
+    return False
+
+
+def load_mlcq(csv_path: str, nosmell_ratio: float = 1.0, filter_minor: bool = True) -> pd.DataFrame:
     logger.info(f"[Data] Loading MLCQ CSV from {csv_path}")
-    
-    # Cache path for 100% parseable AST rows
-    cache_csv_path = csv_path.replace(".csv", "_parseable.csv")
-    
+
+    # ── Cache filename encodes both version AND filter setting ────────────────
+    # This prevents filter_minor=True and filter_minor=False from sharing a
+    # file (which would silently give the wrong dataset to one of them).
+    filter_tag     = "filtered" if filter_minor else "all"
+    cache_csv_path = csv_path.replace(".csv", f"_parseable_{DATA_VERSION}_{filter_tag}.csv")
+    v1_cache_path  = csv_path.replace(".csv", "_parseable.csv")  # legacy v1 cache
+
     if os.path.exists(cache_csv_path):
-        logger.info(f"[Data] Found cached parseable CSV: {cache_csv_path}")
+        # ── Fast path: v2 cache hit ───────────────────────────────────────────
+        logger.info(f"[Data] Found v2 cache ({DATA_VERSION}, {filter_tag}): {cache_csv_path}")
         df = pd.read_csv(cache_csv_path)
+
+    elif os.path.exists(v1_cache_path):
+        # ── Medium path: v1 cache exists → apply filter, save as v2 ──────────
+        # The v1 cache already contains only AST-parseable rows with source_code
+        # embedded.  We just need to apply the severity filter and save the v2
+        # file so subsequent runs skip this block entirely.
+        # This avoids re-running the expensive multiprocessing AST-validation
+        # pipeline when the raw MLCQ CSV doesn't have an inline source_code col.
+        logger.info(
+            f"[Data] v2 cache not found; building from v1 parseable cache "
+            f"(skips AST re-parsing — applying severity filter only)"
+        )
+        df = pd.read_csv(v1_cache_path)
+
+        # Normalise column names in case v1 was saved with inconsistent casing
+        df.columns = [c.lower().strip() for c in df.columns]
+
+        # Re-apply smell normalisation so smell_label / smell_idx are current
+        smell_col = next(
+            (c for c in ["smell", "smell_type", "kind", "codesmell", "code_smell", "smelltype", "type"]
+             if c in df.columns),
+            None,
+        )
+        if smell_col is None and "smell_label" in df.columns:
+            smell_col = "smell_label"  # v1 cache stores the normalised column directly
+
+        if smell_col and "severity" in df.columns:
+            df.loc[df["severity"].str.lower() == "none", smell_col] = "NoSmell"
+
+        if filter_minor and "severity" in df.columns:
+            before = len(df)
+            df = df[df["severity"].str.lower() != "minor"].reset_index(drop=True)
+            logger.info(
+                f"[Data] Severity filter: dropped {before - len(df)} 'minor' rows "
+                f"from v1 cache; {len(df)} remain"
+            )
+
+        # Ensure smell_label and smell_idx are present (v1 cache may already have them)
+        if smell_col and smell_col != "smell_label":
+            df["smell_label"] = df[smell_col].map(_normalize_smell)
+        elif "smell_label" not in df.columns and smell_col:
+            df["smell_label"] = df[smell_col].map(_normalize_smell)
+
+        if "smell_idx" not in df.columns:
+            df["smell_idx"] = df["smell_label"].map(SMELL_TO_IDX)
+
+        df = df.dropna(subset=["smell_idx"]).reset_index(drop=True)
+        df["smell_idx"] = df["smell_idx"].astype(int)
+
+        df.to_csv(cache_csv_path, index=False)
+        logger.info(f"[Data] Saved v2 cache ({DATA_VERSION}, {filter_tag}): {cache_csv_path}")
+
     else:
+        # ── Slow path: no cache at all → full pipeline from raw CSV ───────────
+        # This path only runs on a completely fresh machine with no cached data.
         df = pd.read_csv(csv_path)
         df.columns = [c.lower().strip() for c in df.columns]
-        
+
         smell_col = next(
-            (c for c in ["smell", "smell_type", "kind", "codesmell", "code_smell", "smelltype", "type"] if c in df.columns),
+            (c for c in ["smell", "smell_type", "kind", "codesmell", "code_smell", "smelltype", "type"]
+             if c in df.columns),
             None,
         )
         if smell_col is None:
             raise ValueError(f"Cannot find smell-type column. Available: {list(df.columns)}")
-        
+
         if "severity" in df.columns:
             df.loc[df["severity"].str.lower() == "none", smell_col] = "NoSmell"
-            
+
+        # ── Data-centric severity filter (v2) ─────────────────────────────────
+        if filter_minor and "severity" in df.columns:
+            before = len(df)
+            df = df[df["severity"].str.lower() != "minor"].reset_index(drop=True)
+            logger.info(f"[Data] Severity filter: dropped {before - len(df)} 'minor' rows; {len(df)} remain")
+
         df["smell_label"] = df[smell_col].map(_normalize_smell)
         df["smell_idx"]   = df["smell_label"].map(SMELL_TO_IDX)
-        
         df = df.dropna(subset=["smell_idx"]).reset_index(drop=True)
         df["smell_idx"] = df["smell_idx"].astype(int)
-        
-        # ─── AST Parse Verification (Task 1 & Task 2) with Multiprocessing ───
-        total_loaded = len(df)
-        has_code_col = "source_code" in df.columns
-        
-        if has_code_col:
-            codes = [str(row.get("source_code", "")) if pd.notna(row.get("source_code")) else "" for _, row in df.iterrows()]
-        else:
-            codes = []
-            
+
+        # ── AST Parse Verification with Multiprocessing ───────────────────────
+        total_loaded  = len(df)
+        has_code_col  = "source_code" in df.columns
+        codes = (
+            [str(row.get("source_code", "")) if pd.notna(row.get("source_code")) else ""
+             for _, row in df.iterrows()]
+            if has_code_col else []
+        )
         rows_with_code = sum(1 for c in codes if c.strip() != "")
-        
+
         logger.info(f"[Data] Pre-validating {len(df)} rows for AST parseability using multiprocessing...")
         import multiprocessing
         from concurrent.futures import ProcessPoolExecutor
         num_workers = max(1, multiprocessing.cpu_count() - 1)
-        
+
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             results = list(executor.map(check_single_code, codes, chunksize=100))
-            
+
         parseable_indices = [i for i, ok in enumerate(results) if ok]
         parse_success = len(parseable_indices)
-        parse_failed = rows_with_code - parse_success
-        no_code = total_loaded - rows_with_code
-        
+        parse_failed  = rows_with_code - parse_success
+        no_code       = total_loaded - rows_with_code
+
         logger.info(f"[Data] Pre-validation parsing stats:")
-        logger.info(f"  Total CSV rows loaded: {total_loaded}")
-        logger.info(f"  Rows with source code: {rows_with_code}")
-        logger.info(f"  Successfully parsed AST: {parse_success}")
+        logger.info(f"  Total CSV rows loaded:      {total_loaded}")
+        logger.info(f"  Rows with source code:      {rows_with_code}")
+        logger.info(f"  Successfully parsed AST:    {parse_success}")
         logger.info(f"  Failed AST parsing (Syntax errors): {parse_failed}")
-        logger.info(f"  Missing source code: {no_code}")
         
         df = df.iloc[parseable_indices].reset_index(drop=True)
         
-        # Save cache
+        # Save versioned cache
         df.to_csv(cache_csv_path, index=False)
-        logger.info(f"[Data] Saved cached parseable CSV to: {cache_csv_path}")
+        logger.info(f"[Data] Saved parseable CSV cache ({DATA_VERSION}): {cache_csv_path}")
 
     # ─── Class Balancing on Parsed Trees (Task 3) ───
     df_smells = df[df["smell_label"] != "NoSmell"]
@@ -179,7 +277,14 @@ def load_mlcq(csv_path: str, nosmell_ratio: float = 1.0) -> pd.DataFrame:
 def _build_ast_graph(row: pd.Series, source_code: str, embedder: SemanticEmbedder) -> Optional[Dict]:
     try:
         import javalang
-        tree = javalang.parse.parse(source_code)
+        
+        # Try direct parse (class-level snippets)
+        try:
+            tree = javalang.parse.parse(source_code)
+        except Exception:
+            # Fallback to method-level wrapping to build the tree
+            tree = javalang.parse.parse(f"class _Dummy {{ {source_code} }}")
+            
         if not tree.types:
             return None
 
@@ -255,7 +360,7 @@ def _build_ast_graph(row: pd.Series, source_code: str, embedder: SemanticEmbedde
         class_feat.extend(embedder.embed_identifier(class_name).tolist())
         
         node_features = [class_feat]
-        src, dst = [], []
+        src, dst, edge_types = [], [], []
         
         # Maps for rich edges
         method_idx_map = {}
@@ -282,7 +387,9 @@ def _build_ast_graph(row: pd.Series, source_code: str, embedder: SemanticEmbedde
             m_feat.extend(embedder.embed_identifier(m_code).tolist())
             
             node_features.append(m_feat)
+            # CONTAINS edges: class ↔ method (bidirectional)
             src += [0, i]; dst += [i, 0]
+            edge_types += [EDGE_TYPE["CONTAINS"], EDGE_TYPE["CONTAINS"]]
 
         for i, f in enumerate(fields, start=len(methods) + 1):
             f_name = f.declarators[0].name if hasattr(f, 'declarators') and f.declarators else "field"
@@ -297,31 +404,38 @@ def _build_ast_graph(row: pd.Series, source_code: str, embedder: SemanticEmbedde
             f_feat.extend(embedder.embed_identifier(f_code).tolist())
             
             node_features.append(f_feat)
+            # CONTAINS edges: class ↔ field (bidirectional)
             src += [0, i]; dst += [i, 0]
+            edge_types += [EDGE_TYPE["CONTAINS"], EDGE_TYPE["CONTAINS"]]
 
-        # ─── Add Richer Edges (CALLS, ACCESSES_FIELD) ───
+        # ── Relational edges: CALLS and ACCESSES_FIELD ──────────────────────────
+        # These edges carry the primary signal for FeatureEnvy detection:
+        # a method with many CALLS to external indices is suspicious.
         for i, m in enumerate(methods, start=1):
             if not m.body: continue
             
-            # CALLS
+            # CALLS: method → method
             for _, inv in m.filter(javalang.tree.MethodInvocation):
                 if inv.member in method_idx_map:
                     target_idx = method_idx_map[inv.member]
                     if target_idx != i: # avoid self loop
                         src.append(i)
                         dst.append(target_idx)
+                        edge_types.append(EDGE_TYPE["CALLS"])
             
-            # ACCESSES_FIELD
+            # ACCESSES_FIELD: method → field
             for _, ref in m.filter(javalang.tree.MemberReference):
                 if ref.member in field_idx_map:
                     target_idx = field_idx_map[ref.member]
                     src.append(i)
                     dst.append(target_idx)
+                    edge_types.append(EDGE_TYPE["ACCESSES_FIELD"])
 
         x = torch.tensor(node_features, dtype=torch.float32)
         edge_index = torch.tensor([src, dst], dtype=torch.long) if src else torch.zeros((2, 0), dtype=torch.long)
+        edge_type  = torch.tensor(edge_types, dtype=torch.long)  if edge_types else torch.zeros(0, dtype=torch.long)
         y = torch.tensor(int(row["smell_idx"]), dtype=torch.long)
-        return {"x": x, "edge_index": edge_index, "y": y}
+        return {"x": x, "edge_index": edge_index, "edge_type": edge_type, "y": y}
 
     except Exception as e:
         logger.error(f"[Data] Unexpected error building AST graph for class {row.get('code_name', 'Unknown')}: {e}")
@@ -381,14 +495,17 @@ class SmellDataset(Dataset):
 
     def save(self, path: str):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save(self._graphs, path)
+        torch.save({"version": DATA_VERSION, "graphs": self._graphs}, path)
         logger.info(f"[Data] Saved {len(self._graphs)} graphs to {path}")
 
     @classmethod
     def load(cls, path: str) -> "SmellDataset":
-        graphs = torch.load(path, map_location="cpu", weights_only=False)
+        data = torch.load(path, map_location="cpu", weights_only=False)
         obj = cls.__new__(cls)
-        obj._graphs = graphs
+        if isinstance(data, dict) and "graphs" in data:
+            obj._graphs = data["graphs"]
+        else:
+            obj._graphs = data
         return obj
 
 # ──────────────────────────── Preprocessing Pipeline ───────────────────────
@@ -401,13 +518,36 @@ def run_preprocessing(cfg: dict) -> Tuple["SmellDataset", "SmellDataset", "Smell
     val_path   = os.path.join(proc_dir, "val.pt")
     test_path  = os.path.join(proc_dir, "test.pt")
 
+    # ── Self-healing cache validation ─────────────────────────────────────────────────
+    # Check if cached .pt files exist, have matching DATA_VERSION and valid edge_type schema.
+    # If stale/invalid, silently regenerate; GraphCodeBERT embeddings are already
+    # disk-cached in semantic.cache_dir so only AST parsing reruns.
     if all(os.path.exists(p) for p in [train_path, val_path, test_path]):
-        logger.info("[Data] Processed .pt files found — loading cached graphs")
-        return SmellDataset.load(train_path), SmellDataset.load(val_path), SmellDataset.load(test_path)
+        try:
+            data = torch.load(train_path, map_location="cpu", weights_only=False)
+            if isinstance(data, dict) and data.get("version") == DATA_VERSION:
+                probe = data["graphs"]
+                if probe and "edge_type" in probe[0]:
+                    logger.info(f"[Data] Processed .pt files found with matching version ({DATA_VERSION}) — loading cached graphs")
+                    return SmellDataset.load(train_path), SmellDataset.load(val_path), SmellDataset.load(test_path)
+            elif isinstance(data, list) and len(data) > 0 and "edge_type" in data[0] and DATA_VERSION == "v2":
+                # Legacy compatibility check for direct list loads of version v2
+                logger.info("[Data] Processed .pt files found with edge_type (✓ v2) — loading cached graphs")
+                return SmellDataset.load(train_path), SmellDataset.load(val_path), SmellDataset.load(test_path)
+        except Exception:
+            pass
+        
+        logger.warning(
+            f"[Data] Cached .pt files are missing or stale (expected version {DATA_VERSION}). "
+            "Regenerating graph files — GraphCodeBERT embeddings remain cached so "
+            "only AST parsing will rerun."
+        )
 
+    filter_minor = cfg["dataset"].get("filter_minor_severity", True)
     df = load_mlcq(
         cfg["dataset"]["mlcq_csv"],
-        nosmell_ratio=cfg["dataset"].get("nosmell_ratio", 1.0)
+        nosmell_ratio=cfg["dataset"].get("nosmell_ratio", 1.0),
+        filter_minor=filter_minor,
     )
 
     # Initialize the embedder once so it loads the model into memory

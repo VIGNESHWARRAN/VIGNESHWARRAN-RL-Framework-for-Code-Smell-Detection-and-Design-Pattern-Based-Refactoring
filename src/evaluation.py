@@ -9,6 +9,12 @@ Baselines:
 Experiments:
   1. Baseline Comparison (Accuracy, F1, Precision, Recall)
   2. Per-class F1 breakdown (to see if semantics help Feature Envy / God Class)
+
+Note on agent compatibility:
+  ExperimentRunner accepts any object that exposes:
+    - select_action(item: dict, epsilon: float) -> (int, Tensor)
+    - eval() / train()   (standard nn.Module methods)
+  Both SupervisedSmellDetector and SmellDetectionAgent satisfy this interface.
 """
 
 import os
@@ -17,10 +23,10 @@ import logging
 import numpy as np
 import pandas as pd
 import torch
-from typing import Dict, List, Tuple
+import torch.nn as nn
+from typing import Any, Dict, List, Tuple
 
 from src.data import SMELL_CLASSES, SMELL_TO_IDX, SmellDataset
-from src.models import SmellDetectionAgent
 
 logger = logging.getLogger("SmellRL.eval")
 
@@ -125,8 +131,13 @@ class SVMAgent:
 class ExperimentRunner:
     """
     Evaluates the agent against baselines and performs F1 breakdown.
+
+    Accepts any `agent` that implements:
+        agent.select_action(item: dict, epsilon: float) -> (int, Tensor)
+        agent.eval() / agent.train()
+    Both SupervisedSmellDetector and SmellDetectionAgent satisfy this contract.
     """
-    def __init__(self, agent: SmellDetectionAgent, train_ds: SmellDataset, test_ds: SmellDataset, cfg: dict, device: torch.device):
+    def __init__(self, agent: nn.Module, train_ds: SmellDataset, test_ds: SmellDataset, cfg: dict, device: torch.device):
         self.agent = agent
         self.train_ds = train_ds
         self.test_ds = test_ds
