@@ -1,4 +1,4 @@
-"""
+ """
 SmellRL — main entry point.
 
 Usage:
@@ -97,13 +97,19 @@ def stage_train_dqn(
     agent = SmellDetectionAgent(cfg, feature_dim, device)
 
     # Load pre-trained encoder weights if available
-    gcn_ckpt = CheckpointManager(cfg["paths"]["checkpoint_dir"], "gcn_pretrain", log)
-    payload  = gcn_ckpt.load_latest()
-    if payload and "models" in payload and "gcn" in payload["models"]:
-        agent.gcn.load_state_dict(payload["models"]["gcn"])
-        log.info("Loaded pre-trained encoder weights into DQN agent")
+    supervised_ckpt = CheckpointManager(cfg["paths"]["checkpoint_dir"], "supervised", log)
+    payload = supervised_ckpt.load_latest()
+    if payload and "models" in payload and "encoder" in payload["models"]:
+        agent.gcn.load_state_dict(payload["models"]["encoder"])
+        log.info("Loaded pre-trained encoder weights from supervised checkpoint into DQN agent")
     else:
-        log.warning("No pre-trained encoder checkpoint found — starting encoder from scratch")
+        gcn_ckpt = CheckpointManager(cfg["paths"]["checkpoint_dir"], "gcn_pretrain", log)
+        payload  = gcn_ckpt.load_latest()
+        if payload and "models" in payload and "gcn" in payload["models"]:
+            agent.gcn.load_state_dict(payload["models"]["gcn"])
+            log.info("Loaded pre-trained encoder weights from gcn_pretrain checkpoint into DQN agent")
+        else:
+            log.warning("No pre-trained encoder checkpoint found — starting encoder from scratch")
 
     trainer = DQNTrainer(agent, cfg, device)
     history = trainer.train(train_ds, val_ds)

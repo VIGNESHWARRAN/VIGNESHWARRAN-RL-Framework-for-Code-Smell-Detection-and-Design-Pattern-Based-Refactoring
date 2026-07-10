@@ -28,6 +28,10 @@ smells:
   classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
   n_classes: 5
 
+patterns:
+  classes: ["Strategy", "Observer", "Facade", "Mediator", "ExtractClass", "None"]
+  n_classes: 6
+
 semantic:
   model_name: "microsoft/graphcodebert-base" #"./graphcodebert-base" 
   embedding_dim: 768

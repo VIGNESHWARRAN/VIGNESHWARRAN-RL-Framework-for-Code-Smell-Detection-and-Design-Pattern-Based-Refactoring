@@ -26,9 +26,23 @@ import torch
 import torch.nn as nn
 from typing import Any, Dict, List, Tuple
 
-from src.data import SMELL_CLASSES, SMELL_TO_IDX, SmellDataset
+from src.data import SMELL_CLASSES, SMELL_TO_IDX, SmellDataset, PATTERN_CLASSES
 
 logger = logging.getLogger("SmellRL.eval")
+
+# Map ground-truth smells to their dominant refactoring pattern index:
+# 0: GodClass -> 2: Facade
+# 1: FeatureEnvy -> 0: Strategy
+# 2: LongMethod -> 4: ExtractClass
+# 3: DataClass -> 1: Observer
+# 4: NoSmell -> 5: None
+SMELL_TO_PATTERN_DOMINANT = {
+    0: 2,
+    1: 0,
+    2: 4,
+    3: 1,
+    4: 5,
+}
 
 # ──────────────────────────── Metric helpers ───────────────────────────────
 
@@ -128,6 +142,85 @@ class SVMAgent:
 
 # ──────────────────────────── Experiment Runner ────────────────────────────
 
+def simulate_refactoring_impact(preds: List[int], test_ds: SmellDataset) -> Tuple[float, float, float]:
+    """
+    Simulates the impact of recommended refactoring actions on code quality metrics.
+    
+    If the agent recommends a correct action (reward > 0.0):
+      - Facade/Mediator (for GodClass): Reduces class WMC by 40%, CBO by 20%
+      - Strategy/ExtractClass (for FeatureEnvy): Reduces class CBO by 30%, RFC by 20%
+      - ExtractClass (for LongMethod): Reduces class LOC by 30%, WMC by 15%
+      - Observer (for DataClass): Reduces class CBO by 10%
+    
+    If the agent recommends an incorrect/harmful action:
+      - Applying pattern to NoSmell: Increases class CBO by 15% (unnecessary delegation overhead)
+      
+    Returns:
+      wmc_reduction_pct, cbo_reduction_pct, loc_reduction_pct
+    """
+    initial_wmc = 0.0
+    initial_cbo = 0.0
+    initial_loc = 0.0
+    
+    final_wmc = 0.0
+    final_cbo = 0.0
+    final_loc = 0.0
+    
+    for item, action in zip(test_ds, preds):
+        true_smell = int(item["y"].item())
+        x = item["x"][0] # class node
+        
+        # Reverse-normalize initial metrics
+        wmc = float(x[3].item() * 150.0)
+        cbo = float(x[6].item() * 40.0)
+        loc = float(x[8].item() * 3000.0)
+        
+        initial_wmc += wmc
+        initial_cbo += cbo
+        initial_loc += loc
+        
+        # Apply refactoring impact
+        new_wmc = wmc
+        new_cbo = cbo
+        new_loc = loc
+        
+        # 0: Strategy, 1: Observer, 2: Facade, 3: Mediator, 4: ExtractClass, 5: None
+        if true_smell == 0:  # GodClass
+            if action in [2, 3]:  # Facade, Mediator
+                new_wmc *= 0.60  # 40% reduction
+                new_cbo *= 0.80  # 20% reduction
+            elif action == 4:  # ExtractClass
+                new_wmc *= 0.80
+                new_cbo *= 0.90
+        elif true_smell == 1:  # FeatureEnvy
+            if action == 0:  # Strategy
+                new_cbo *= 0.70  # 30% reduction
+                new_wmc *= 0.90
+            elif action == 4:  # ExtractClass
+                new_cbo *= 0.80
+        elif true_smell == 2:  # LongMethod
+            if action == 4:  # ExtractClass (representing Extract Method)
+                new_loc *= 0.70  # 30% reduction in this class's size / method size
+                new_wmc *= 0.85
+        elif true_smell == 3:  # DataClass
+            if action == 1:  # Observer
+                new_cbo *= 0.90
+        elif true_smell == 4:  # NoSmell
+            if action in [0, 1, 2, 3, 4]:  # False alarm (unnecessary refactoring)
+                new_cbo *= 1.15  # 15% increase due to delegation overhead
+                
+        final_wmc += new_wmc
+        final_cbo += new_cbo
+        final_loc += new_loc
+        
+    wmc_red = (initial_wmc - final_wmc) / max(1e-9, initial_wmc) * 100.0
+    cbo_red = (initial_cbo - final_cbo) / max(1e-9, initial_cbo) * 100.0
+    loc_red = (initial_loc - final_loc) / max(1e-9, initial_loc) * 100.0
+    
+    return float(wmc_red), float(cbo_red), float(loc_red)
+
+# ──────────────────────────── Experiment Runner ────────────────────────────
+
 class ExperimentRunner:
     """
     Evaluates the agent against baselines and performs F1 breakdown.
@@ -151,46 +244,57 @@ class ExperimentRunner:
     def _smellrl_preds(self, ds: SmellDataset) -> List[int]:
         self.agent.eval()
         preds = []
+        is_smell_predictor = getattr(self.agent, "n_classes", 5) == 5
         for item in ds:
             action, _ = self.agent.select_action(item, epsilon=0.0)
+            if is_smell_predictor:
+                action = SMELL_TO_PATTERN_DOMINANT.get(action, 5)
             preds.append(action)
         self.agent.train()
         return preds
 
     def run_baseline_comparison(self) -> dict:
         self.log.info("[Eval] ─── Experiment: Baseline Comparison ───")
-        true_y = [int(item["y"].item()) for item in self.test_ds]
+        true_y = [SMELL_TO_PATTERN_DOMINANT[int(item["y"].item())] for item in self.test_ds]
         methods = {}
 
         rand = RandomAgent()
-        methods["Random"] = [rand.predict(it) for it in self.test_ds]
+        methods["Random"] = [SMELL_TO_PATTERN_DOMINANT[rand.predict(it)] for it in self.test_ds]
 
         rule = RuleBasedAgent()
-        methods["Rule-Based"] = [rule.predict(it) for it in self.test_ds]
+        methods["Rule-Based"] = [SMELL_TO_PATTERN_DOMINANT[rule.predict(it)] for it in self.test_ds]
 
         svm = SVMAgent()
         svm.fit(self.train_ds)
-        methods["SVM"] = [svm.predict(it) for it in self.test_ds]
+        methods["SVM"] = [SMELL_TO_PATTERN_DOMINANT[svm.predict(it)] for it in self.test_ds]
 
         methods["SmellRL (Ours)"] = self._smellrl_preds(self.test_ds)
 
         results = {}
         rows = []
         for name, preds in methods.items():
-            rep = classification_report_dict(true_y, preds, SMELL_CLASSES)
+            rep = classification_report_dict(true_y, preds, PATTERN_CLASSES)
+            wmc_red, cbo_red, loc_red = simulate_refactoring_impact(preds, self.test_ds)
             results[name] = rep
+            results[name]["wmc_reduction"] = wmc_red
+            results[name]["cbo_reduction"] = cbo_red
+            results[name]["loc_reduction"] = loc_red
+            
             rows.append({
                 "Method": name, 
                 "Accuracy": round(rep["accuracy"], 4), 
                 "F1": round(rep["f1"], 4), 
                 "Precision": round(rep["precision"], 4), 
-                "Recall": round(rep["recall"], 4)
+                "Recall": round(rep["recall"], 4),
+                "WMC_Complexity_Reduction(%)": round(wmc_red, 2),
+                "CBO_Coupling_Reduction(%)": round(cbo_red, 2),
+                "LOC_Size_Reduction(%)": round(loc_red, 2)
             })
-            self.log.info(f"[Eval] {name:15s} | Acc={rep['accuracy']:.4f} | F1={rep['f1']:.4f}")
+            self.log.info(f"[Eval] {name:15s} | Acc={rep['accuracy']:.4f} | F1={rep['f1']:.4f} | WMC_red={wmc_red:.1f}% | CBO_red={cbo_red:.1f}%")
             
             if name == "SmellRL (Ours)":
                 cm = rep["confusion_matrix"]
-                df_cm = pd.DataFrame(cm, index=SMELL_CLASSES, columns=SMELL_CLASSES)
+                df_cm = pd.DataFrame(cm, index=PATTERN_CLASSES, columns=PATTERN_CLASSES)
                 cm_path = os.path.join(self.results_dir, "confusion_matrix.csv")
                 df_cm.to_csv(cm_path)
                 self.log.info(f"[Eval] Saved SmellRL confusion matrix to {cm_path}")
@@ -199,28 +303,28 @@ class ExperimentRunner:
         return results
 
     def run_per_class_analysis(self) -> dict:
-        self.log.info("[Eval] ─── Experiment: Per-class Smell F1 Analysis ───")
-        true_y = [int(item["y"].item()) for item in self.test_ds]
+        self.log.info("[Eval] ─── Experiment: Per-class Refactoring F1 Analysis ───")
+        true_y = [SMELL_TO_PATTERN_DOMINANT[int(item["y"].item())] for item in self.test_ds]
         
         srl_p1 = self._smellrl_preds(self.test_ds)
         
         rule = RuleBasedAgent()
-        rule_p1 = [rule.predict(it) for it in self.test_ds]
+        rule_p1 = [SMELL_TO_PATTERN_DOMINANT[rule.predict(it)] for it in self.test_ds]
 
-        srl_rep = classification_report_dict(true_y, srl_p1, SMELL_CLASSES)
-        rule_rep = classification_report_dict(true_y, rule_p1, SMELL_CLASSES)
+        srl_rep = classification_report_dict(true_y, srl_p1, PATTERN_CLASSES)
+        rule_rep = classification_report_dict(true_y, rule_p1, PATTERN_CLASSES)
 
         rows = []
-        for smell in SMELL_CLASSES:
-            srl_f1 = srl_rep["per_class"].get(smell, {}).get("f1", 0.0)
-            rule_f1 = rule_rep["per_class"].get(smell, {}).get("f1", 0.0)
+        for pattern in PATTERN_CLASSES:
+            srl_f1 = srl_rep["per_class"].get(pattern, {}).get("f1", 0.0)
+            rule_f1 = rule_rep["per_class"].get(pattern, {}).get("f1", 0.0)
             rows.append({
-                "Smell Type": smell, 
+                "Pattern Type": pattern, 
                 "SmellRL F1": round(srl_f1, 4), 
                 "Rule-Based F1": round(rule_f1, 4),
                 "Delta": round(srl_f1 - rule_f1, 4)
             })
-            self.log.info(f"[Eval] {smell:15s} | SmellRL F1={srl_f1:.4f} | Rule-Based F1={rule_f1:.4f} | Δ={srl_f1-rule_f1:+.4f}")
+            self.log.info(f"[Eval] {pattern:15s} | SmellRL F1={srl_f1:.4f} | Rule-Based F1={rule_f1:.4f} | Δ={srl_f1-rule_f1:+.4f}")
 
         pd.DataFrame(rows).to_csv(os.path.join(self.results_dir, "exp5_per_class_f1.csv"), index=False)
         return rows

@@ -605,17 +605,25 @@ class DQNTrainer:
         return self.eps_end + (self.eps_start - self.eps_end) * (1.0 - frac)
 
     def _compute_reward(self, action: int, true_smell: int) -> float:
-        is_action_nosmell = (action == self.nosmell_idx)
-        is_true_nosmell   = (true_smell == self.nosmell_idx)
-
-        if action == true_smell:
-            base = self.r_correct_nosmell if is_true_nosmell else self.r_correct_smell
-        elif is_action_nosmell and not is_true_nosmell:
-            base = self.r_missed_smell
-        elif (not is_action_nosmell) and is_true_nosmell:
-            base = self.r_false_alarm
+        # Rows represent Ground-Truth Smells: [GodClass, FeatureEnvy, LongMethod, DataClass, NoSmell]
+        # Cols represent Refactoring Action Patterns: [Strategy, Observer, Facade, Mediator, ExtractClass, None]
+        # Soft Reward Matrix mapping code quality feedback to refactoring decisions:
+        soft_reward_matrix = [
+            [-1.0, -1.0,  2.0,  1.0,  0.5, -2.0],  # GodClass
+            [ 2.0, -1.0, -1.0, -1.0,  1.0, -2.0],  # FeatureEnvy
+            [-1.0, -1.0, -1.0, -1.0,  2.0, -2.0],  # LongMethod
+            [-1.0,  2.0, -1.0, -1.0, -1.0, -2.0],  # DataClass
+            [-1.0, -1.0, -1.0, -1.0, -1.0,  2.0],  # NoSmell
+        ]
+        
+        if true_smell < 0 or true_smell >= len(soft_reward_matrix):
+            base = -2.0
         else:
-            base = self.r_incorrect_smell
+            pattern_idx = action
+            if pattern_idx < 0 or pattern_idx >= len(soft_reward_matrix[0]):
+                base = -2.0
+            else:
+                base = soft_reward_matrix[true_smell][pattern_idx]
 
         return base * self.class_weights.get(true_smell, 1.0)
 
@@ -656,7 +664,15 @@ class DQNTrainer:
                 reward             = self._compute_reward(action, true_smell)
 
                 ep_reward += reward
-                if action == true_smell:
+                # A refactoring action is considered "correct" if it is valid (reward > 0.0)
+                valid_patterns = {
+                    0: [2, 3, 4],  # GodClass -> Facade, Mediator, ExtractClass
+                    1: [0, 4],     # FeatureEnvy -> Strategy, ExtractClass
+                    2: [4],        # LongMethod -> ExtractClass
+                    3: [1],        # DataClass -> Observer
+                    4: [5]         # NoSmell -> None
+                }
+                if action in valid_patterns.get(true_smell, []):
                     correct += 1
 
                 self.buffer.push(
@@ -690,7 +706,14 @@ class DQNTrainer:
                 with torch.no_grad():
                     for val_item in val_ds:
                         val_action, _ = self.agent.select_action(val_item, epsilon=0.0)
-                        if val_action == int(val_item["y"].item()):
+                        valid_patterns = {
+                            0: [2, 3, 4],  # GodClass -> Facade, Mediator, ExtractClass
+                            1: [0, 4],     # FeatureEnvy -> Strategy, ExtractClass
+                            2: [4],        # LongMethod -> ExtractClass
+                            3: [1],        # DataClass -> Observer
+                            4: [5]         # NoSmell -> None
+                        }
+                        if val_action in valid_patterns.get(int(val_item["y"].item()), []):
                             val_correct += 1
                 val_acc              = val_correct / max(1, len(val_ds))
                 stats["val_accuracy"] = val_acc

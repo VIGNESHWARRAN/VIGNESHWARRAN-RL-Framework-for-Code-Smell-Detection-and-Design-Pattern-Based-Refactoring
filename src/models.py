@@ -38,8 +38,8 @@ class NodeFeatureFusion(nn.Module):
     """
     STRUCT_DIM = 15    # 3 node-type + 6 CK + 6 data-usage
     SEM_DIM    = 768   # GraphCodeBERT CLS embedding
-    STRUCT_OUT = 96    # 3× semantic — structure gets priority
-    SEM_OUT    = 32    # compressed semantic
+    STRUCT_OUT = 104   # Structural features get dominant representation
+    SEM_OUT    = 24    # 18.75% semantic weightage (24/128 = 18.75%)
     FUSED_DIM  = 128   # STRUCT_OUT + SEM_OUT (must equal gcn.hidden_dim)
 
     def __init__(self, dropout: float = 0.1):
@@ -158,14 +158,14 @@ class RGATLayer(nn.Module):
         E = row.size(0)
 
         # ── 1. Type-specific linear transforms ──────────────────────────────
-        # W[edge_type]: [E, num_heads, in_ch, head_dim]
-        W_e   = self.W[edge_type]                           # [E, H, in_ch, head_dim]
-        x_src = x[row]                                       # [E, in_ch]
-        x_dst = x[col]                                       # [E, in_ch]
+        # Project all nodes for all edge types at once to avoid OOM
+        # W shape: [num_edge_types, H, in_ch, head_dim]
+        # h_all shape: [N, num_edge_types, H, head_dim]
+        h_all = torch.einsum("ni,rhid->nrhd", x, self.W)
 
-        # h_src[e,k] = x_src[e] @ W_e[e,k]   →  [E, H, head_dim]
-        h_src = torch.einsum("ei,ehid->ehd", x_src, W_e)   # [E, H, head_dim]
-        h_dst = torch.einsum("ei,ehid->ehd", x_dst, W_e)   # [E, H, head_dim]
+        # Gather the projected features for the source and destination of each edge
+        h_src = h_all[row, edge_type]                       # [E, H, head_dim]
+        h_dst = h_all[col, edge_type]                       # [E, H, head_dim]
 
         # ── 2. Attention score e_ij = LeakyReLU(a · [h_src || h_dst]) ──────
         a_e   = self.a[edge_type]                            # [E, H, 2*head_dim]
@@ -385,7 +385,8 @@ class SmellDetectionAgent(nn.Module):
     def __init__(self, cfg: dict, feature_dim: int, device: torch.device):
         super().__init__()
         self.device    = device
-        self.n_classes = cfg["smells"]["n_classes"]
+        # Supports refactoring pattern selection (6 actions) for RL, or falls back to smells (5)
+        self.n_classes = cfg.get("patterns", {}).get("n_classes", cfg["smells"]["n_classes"])
 
         encoder_type = cfg["gcn"].get("encoder_type", "rgat")
         self._encoder_type = encoder_type

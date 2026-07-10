@@ -46,13 +46,21 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.utils      import setup_logger, get_device, CheckpointManager
-from src.data       import run_preprocessing, SmellDataset, SMELL_CLASSES, NUM_EDGE_TYPES
+from src.data       import run_preprocessing, SmellDataset, SMELL_CLASSES, NUM_EDGE_TYPES, PATTERN_CLASSES
 from src.models     import (
     RGATEncoder, GCNEncoder, SupervisedSmellDetector,
     SmellDetectionAgent, NodeFeatureFusion,
 )
 from src.training   import SupervisedTrainer, DQNTrainer, FocalLoss
 from src.evaluation import classification_report_dict, ExperimentRunner
+
+SMELL_TO_PATTERN_DOMINANT = {
+    0: 2,
+    1: 0,
+    2: 4,
+    3: 1,
+    4: 5,
+}
 
 
 # ──────────────────────────── AblatedDataset ───────────────────────────────
@@ -205,11 +213,12 @@ def evaluate_detector(detector, test_ds) -> dict:
     detector.eval()
     y_true, y_pred = [], []
     for item in test_ds:
-        y_true.append(int(item["y"].item()))
+        true_pattern = SMELL_TO_PATTERN_DOMINANT[int(item["y"].item())]
+        y_true.append(true_pattern)
         action, _ = detector.select_action(item, epsilon=0.0)
         y_pred.append(action)
     detector.train()
-    return classification_report_dict(y_true, y_pred, SMELL_CLASSES)
+    return classification_report_dict(y_true, y_pred, PATTERN_CLASSES)
 
 
 def build_encoder(encoder_type: str, feature_dim: int, cfg: dict, device: torch.device):
@@ -353,7 +362,23 @@ def run_single(
     if loss_type == "dqn":
         # ── DQN ablation path ────────────────────────────────────────────────
         log.info("  Training path: DQN contextual bandit (ablation)")
-        agent   = SmellDetectionAgent(run_cfg, feature_dim, device)
+        # 1. Supervised pre-training of the encoder on Smell Classification
+        pretrain_epochs = run_cfg.get("gcn_pretrain", {}).get("epochs", 50)
+        pretrain_cfg = copy.deepcopy(run_cfg)
+        pretrain_cfg.setdefault("supervised_train", {})["epochs"] = pretrain_epochs
+        # Ensure we predict smell classes (5) during pretraining
+        pretrain_cfg["smells"]["n_classes"] = 5 
+        
+        log.info(f"  [Pre-training] Training encoder on Smell Classification for {pretrain_epochs} epochs...")
+        pretrainer = SupervisedTrainer(pretrain_cfg, device)
+        supervised_detector, _ = pretrainer.train(train_ds, val_ds)
+        
+        # 2. Transfer encoder weights to DQN agent
+        agent = SmellDetectionAgent(run_cfg, feature_dim, device)
+        agent.gcn.load_state_dict(supervised_detector.encoder.state_dict())
+        log.info("  [Transfer] Loaded pre-trained encoder weights into DQN agent.")
+        
+        # 3. Train DQN with RL rewards (6 actions)
         trainer = DQNTrainer(agent, run_cfg, device)
         history = trainer.train(train_ds, val_ds)
         detector = agent
@@ -498,9 +523,9 @@ def run_single(
         f"P={report['precision']:.4f} | R={report['recall']:.4f} | "
         f"Time={elapsed:.0f}s"
     )
-    for smell in SMELL_CLASSES:
-        pc = report["per_class"].get(smell, {})
-        log.info(f"    {smell:15s}: P={pc.get('p',0):.3f}  R={pc.get('r',0):.3f}  F1={pc.get('f1',0):.3f}")
+    for pattern in PATTERN_CLASSES:
+        pc = report["per_class"].get(pattern, {})
+        log.info(f"    {pattern:15s}: P={pc.get('p',0):.3f}  R={pc.get('r',0):.3f}  F1={pc.get('f1',0):.3f}")
 
     # Save per-run results CSV
     per_run_path = os.path.join(run_cfg["paths"]["results_dir"], "ablation_metrics.csv")
@@ -510,7 +535,7 @@ def run_single(
         "macro_f1": report["f1"],
         "macro_precision": report["precision"],
         "macro_recall": report["recall"],
-        **{f"f1_{s}": report["per_class"].get(s, {}).get("f1", 0.0) for s in SMELL_CLASSES},
+        **{f"f1_{p}": report["per_class"].get(p, {}).get("f1", 0.0) for p in PATTERN_CLASSES},
     }]).to_csv(per_run_path, index=False)
 
     return {
@@ -530,8 +555,8 @@ def run_single(
             "macro_precision": round(report["precision"], 4),
             "macro_recall":    round(report["recall"], 4),
             "per_class_f1": {
-                s: round(report["per_class"].get(s, {}).get("f1", 0.0), 4)
-                for s in SMELL_CLASSES
+                p: round(report["per_class"].get(p, {}).get("f1", 0.0), 4)
+                for p in PATTERN_CLASSES
             },
         },
         "training_summary": {
@@ -644,7 +669,7 @@ def main():
             "macro_recall":    r["metrics"].get("macro_recall", 0.0),
             "total_epochs":    r["training_summary"].get("total_epochs", 0),
             "best_val_acc":    r["training_summary"].get("best_val_acc", 0.0),
-            **{f"f1_{s}": r["metrics"].get("per_class_f1", {}).get(s, 0.0) for s in SMELL_CLASSES},
+            **{f"f1_{p}": r["metrics"].get("per_class_f1", {}).get(p, 0.0) for p in PATTERN_CLASSES},
             **{f"hp_{k}": v for k, v in r.get("hyperparameters", {}).items()},
         }
         csv_rows.append(row)
