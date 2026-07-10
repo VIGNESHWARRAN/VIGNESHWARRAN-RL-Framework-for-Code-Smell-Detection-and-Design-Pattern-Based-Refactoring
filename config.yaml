@@ -1,28 +1,20 @@
 paths:
-  data_dir: "data/mlcq"
+  data_dir: "data/smellycode"
   processed_dir: "data/processed"
   results_dir: "data/results"
   checkpoint_dir: "checkpoints"
   log_dir: "logs"
 
 dataset:
+  dataset_type: "smellycode"
+  smellycode_csv: "data/smellycode/SmellyCode++.csv"
   mlcq_csv: "data/mlcq/mlcq.csv"
   train_ratio: 0.70
   val_ratio: 0.15
   test_ratio: 0.15
   random_seed: 42
-  use_synthetic: false
-  n_synthetic: 4077
-  nosmell_ratio: 3.0  # NoSmell instances are downsampled to (nosmell_ratio * largest smell class
-                       # count) instead of a 1:1 match. 3.0 keeps clean code at ~3x the biggest
-                       # smell class, so the agent still sees enough clean code to avoid
-                       # over-flagging healthy code at test time. Set to 1.0 to restore the
-                       # old 1:1 behavior.
-  filter_minor_severity: true   # Drop rows where severity == "minor" to eliminate label noise.
-                                 # Human inter-rater disagreement concentrates in minor smells;
-                                 # removing them sharpens the decision boundary significantly.
-  data_version: "v2"            # Bump to invalidate stale .pt caches when schema changes.
-                                 # v2 adds edge_type tensor + drops minor-severity rows.
+  nosmell_ratio: 3.0  # downsample NoSmell to 3.0 * largest smell count
+  data_version: "v3"
 
 smells:
   classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
@@ -33,24 +25,15 @@ patterns:
   n_classes: 6
 
 semantic:
-  model_name: "microsoft/graphcodebert-base" #"./graphcodebert-base" 
+  model_name: "microsoft/graphcodebert-base"
   embedding_dim: 768
   max_length: 512
   use_cache: true
   cache_dir: "data/processed/embeddings_cache"
 
 graph:
-  node_types: ["class", "method", "field", "parameter"]
-  edge_types: ["CONTAINS", "CALLS", "USES", "INHERITS", "ACCESSES_FIELD"]
-
-ck_metrics:
-  features: ["wmc", "dit", "noc", "rfc", "cbo"]
-  n_features: 5
-
-data_usage:
-  features: ["n_field_accesses", "n_method_calls", "n_external_objects",
-             "field_access_ratio", "method_call_ratio", "data_usage_density"]
-  n_features: 6
+  node_types: ["class", "method", "field"]
+  edge_types: ["CONTAINS", "CALLS", "ACCESSES_FIELD"]
 
 gcn:
   hidden_dim: 128
@@ -60,14 +43,12 @@ gcn:
   use_attention_pool: true
   use_residual: true
   use_layernorm: true
-  # ── Relational Graph Attention upgrade ───────────────────────────────
-  encoder_type: "rgat"   # "rgat" (default) | "gcn" (legacy ablation)
-                          # rgat learns separate attention per edge type;
-                          # gcn treats all edges identically (old baseline).
-  num_edge_types: 3       # CONTAINS=0, CALLS=1, ACCESSES_FIELD=2
-  num_heads: 4            # Multi-head attention heads in each RGATLayer
+  encoder_type: "rgat"
+  num_edge_types: 3
+  num_heads: 4
 
 dqn:
+  gamma: 0.9                   # CRITICAL: non-zero for 2-step MDP
   hidden_layers: [256, 128, 64]
   learning_rate: 0.0005
   batch_size: 128
@@ -76,68 +57,20 @@ dqn:
   replay_buffer_size: 50000
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay_steps: 250000   # global_step increments once per training instance per episode;
-                                 # set this to roughly (instances_per_episode * ~50) so epsilon
-                                 # decays over ~50 episodes instead of <1. Adjust once you know
-                                 # your actual train-set size (len(train_ds)).
+  epsilon_decay_steps: 500000  # decay exploration over 500K steps
   target_update_freq: 1000
-  max_episodes: 200
-  warmup_steps: 100  # 200
-  gamma: 0.0  # 0.0 because it's a single-step episodic task
+  max_episodes: 300
+  warmup_steps: 500
+  eval_freq: 25
 
 gcn_pretrain:
-  epochs: 100              # Increased from 50; filtered dataset is smaller so more epochs needed
+  epochs: 100
   learning_rate: 0.001
   batch_size: 32
   checkpoint_freq: 10
-  # ── Loss function (ablation pre-trainer) ────────────────────────────
-  loss: "focal"            # "focal" | "cross_entropy"
-  focal_gamma: 2.0         # Focusing parameter γ: 0=CE, 2=standard focal (RetinaNet default)
-
-# ── Supervised Training (PRIMARY pipeline, replaces DQN) ──────────────────
-# DQNTrainer is retained in training.py as an ablation baseline only.
-supervised_train:
-  epochs: 150
-  learning_rate: 3.0e-4
-  batch_size: 32
-  weight_decay: 1.0e-5
-  checkpoint_freq: 25
-  early_stopping_patience: 20   # Stop if val_acc doesn't improve for N eval cycles
-  focal_gamma: 2.0
-  eval_freq: 10                  # Validate every N epochs
-
-experiments:
-  variants:
-    - name: "Experiment A"
-      description: "CK metrics + graph topology only"
-      use_ck: true
-      use_semantic: false
-      use_data_usage: false
-    - name: "Experiment B"
-      description: "CK metrics + semantic embeddings"
-      use_ck: true
-      use_semantic: true
-      use_data_usage: false
-    - name: "Experiment C"
-      description: "CK metrics + semantic + data usage"
-      use_ck: true
-      use_semantic: true
-      use_data_usage: true
 
 training:
   checkpoint_freq: 50
   log_freq: 10
-  eval_freq: 50
-
-reward:
-  correct_smell: 2.0        # agent correctly identifies an actual smell (any of the 4 smell classes)
-  correct_nosmell: 0.5      # agent correctly identifies clean code
-  incorrect_smell: -1.0     # agent picks the wrong smell class (smell A mistaken for smell B)
-  false_alarm: -0.5         # agent flags clean code (NoSmell) as a smell
-  missed_smell: -2.0        # agent labels an actual smell as NoSmell
 
 device: "auto"
-
-class_weights:
-  enabled: true
-  method: "inverse_frequency"  # scale rewards by inverse class frequency

@@ -1,22 +1,3 @@
-"""
-Evaluation pipeline for Semantic-Aware SmellRL.
-
-Baselines:
-  RandomAgent      — uniformly random actions
-  RuleBasedAgent   — Designite-like CK metric thresholds
-  SVMAgent         — scikit-learn SVC trained on CK metrics
-
-Experiments:
-  1. Baseline Comparison (Accuracy, F1, Precision, Recall)
-  2. Per-class F1 breakdown (to see if semantics help Feature Envy / God Class)
-
-Note on agent compatibility:
-  ExperimentRunner accepts any object that exposes:
-    - select_action(item: dict, epsilon: float) -> (int, Tensor)
-    - eval() / train()   (standard nn.Module methods)
-  Both SupervisedSmellDetector and SmellDetectionAgent satisfy this interface.
-"""
-
 import os
 import json
 import logging
@@ -26,7 +7,8 @@ import torch
 import torch.nn as nn
 from typing import Any, Dict, List, Tuple
 
-from src.data import SMELL_CLASSES, SMELL_TO_IDX, SmellDataset, PATTERN_CLASSES
+from src.data import SMELL_CLASSES, SMELL_TO_IDX, SmellDataset, PATTERN_CLASSES, PATTERN_TO_IDX
+from src.environment import SOFT_REWARD_MATRIX
 
 logger = logging.getLogger("SmellRL.eval")
 
@@ -71,49 +53,51 @@ def classification_report_dict(y_true: List[int], y_pred: List[int], labels: Lis
 # ──────────────────────────── Baseline agents ──────────────────────────────
 
 class RandomAgent:
-    """Uniformly random actions — establishes floor performance."""
+    """Uniformly random refactoring actions — establishes floor performance."""
     name = "Random Agent"
-    def __init__(self, n_smells: int = 5, seed: int = 42):
-        self.n_s = n_smells
+    def __init__(self, n_actions: int = 6, seed: int = 42):
+        self.n_a = n_actions
         np.random.seed(seed)
 
     def predict(self, _item: dict) -> int:
-        return np.random.randint(0, self.n_s)
+        return np.random.randint(0, self.n_a)
 
 class RuleBasedAgent:
     """
-    Designite-inspired rule-based smell detector.
+    Designite-inspired rule-based smell detector adapted to Halstead metrics.
+    Output mapped to smells (which matches true class).
     """
     name = "Rule-Based (Designite-like)"
 
     def predict(self, item: dict) -> int:
-        x = item["x"]  # [N, 783] raw node feature tensor
-        cf = x[0].tolist()  # class node (index 0): 783-dim feature vector
+        # Features on class node x[0]
+        x = item["x"]
+        cf = x[0].tolist()
 
-        # Reverse-normalise CK metrics from the class node (indices 3-8)
-        wmc = cf[3] * 150.0
-        cbo = cf[6] * 40.0
-        rfc = cf[7] * 200.0
-        loc = cf[8] * 3000.0
-        # Correct method/field counts from the node-type one-hot flags:
-        # x[:, 1] = is_method, x[:, 2] = is_field across all N nodes
+        # Reverse-normalise Halstead metrics
+        cyclomatic = cf[3] * 50.0
+        lloc = cf[4] * 5000.0
+        V = cf[5] * 5000.0
+        D = cf[6] * 100.0
+        E = cf[7] * 1000000.0
+        B = cf[8] * 5.0
+        
         n_m = max(1, int(x[:, 1].sum().item()))
         n_f = max(0, int(x[:, 2].sum().item()))
-        avg_cc = wmc / n_m
-
-        if wmc > 47 or loc > 1000:
+        
+        if cyclomatic > 30.0 or lloc > 1500.0:
             return SMELL_TO_IDX["GodClass"]
-        if cbo > 10 and rfc > 50:
+        if D > 50.0 and V > 2000.0:
             return SMELL_TO_IDX["FeatureEnvy"]
-        if (loc / n_m) > 100 or avg_cc > 8:
+        if (lloc / n_m) > 100.0 or (cyclomatic / n_m) > 8.0:
             return SMELL_TO_IDX["LongMethod"]
-        if n_f > 8 and wmc < 10:
+        if n_f > 8 and cyclomatic < 10.0:
             return SMELL_TO_IDX["DataClass"]
         return SMELL_TO_IDX["NoSmell"]
 
 class SVMAgent:
-    """SVM + CK metrics baseline trained on the training set."""
-    name = "SVM + CK Metrics"
+    """SVM trained on Halstead features to predict smells."""
+    name = "SVM + Halstead Metrics"
 
     def __init__(self):
         from sklearn.svm import SVC
@@ -124,8 +108,7 @@ class SVMAgent:
 
     def _extract_features(self, item: dict) -> np.ndarray:
         x = item["x"][0].numpy()
-        # Extract the core CK metrics + loc: wmc, dit, noc, cbo, rfc, loc
-        # We assume they are at indices 3:9 after the 3 one-hot node-type indicators.
+        # Halstead metrics at indices 3:9
         return x[3:9]
 
     def fit(self, train_ds: SmellDataset):
@@ -140,96 +123,88 @@ class SVMAgent:
         feat = self.scaler.transform(feat)
         return int(self.clf.predict(feat)[0])
 
-# ──────────────────────────── Experiment Runner ────────────────────────────
+# ──────────────────────────── RL-Native Metrics ────────────────────────────
 
-def simulate_refactoring_impact(preds: List[int], test_ds: SmellDataset) -> Tuple[float, float, float]:
-    """
-    Simulates the impact of recommended refactoring actions on code quality metrics.
-    
-    If the agent recommends a correct action (reward > 0.0):
-      - Facade/Mediator (for GodClass): Reduces class WMC by 40%, CBO by 20%
-      - Strategy/ExtractClass (for FeatureEnvy): Reduces class CBO by 30%, RFC by 20%
-      - ExtractClass (for LongMethod): Reduces class LOC by 30%, WMC by 15%
-      - Observer (for DataClass): Reduces class CBO by 10%
-    
-    If the agent recommends an incorrect/harmful action:
-      - Applying pattern to NoSmell: Increases class CBO by 15% (unnecessary delegation overhead)
-      
-    Returns:
-      wmc_reduction_pct, cbo_reduction_pct, loc_reduction_pct
-    """
-    initial_wmc = 0.0
-    initial_cbo = 0.0
-    initial_loc = 0.0
-    
-    final_wmc = 0.0
-    final_cbo = 0.0
-    final_loc = 0.0
-    
+def compute_cumulative_reward(preds: List[int], test_ds: SmellDataset, class_weights: dict) -> float:
+    """Measures soft reward accumulated by predictions on the test set."""
+    total_reward = 0.0
     for item, action in zip(test_ds, preds):
         true_smell = int(item["y"].item())
-        x = item["x"][0] # class node
-        
-        # Reverse-normalize initial metrics
-        wmc = float(x[3].item() * 150.0)
-        cbo = float(x[6].item() * 40.0)
-        loc = float(x[8].item() * 3000.0)
-        
-        initial_wmc += wmc
-        initial_cbo += cbo
-        initial_loc += loc
-        
-        # Apply refactoring impact
-        new_wmc = wmc
-        new_cbo = cbo
-        new_loc = loc
-        
-        # 0: Strategy, 1: Observer, 2: Facade, 3: Mediator, 4: ExtractClass, 5: None
-        if true_smell == 0:  # GodClass
-            if action in [2, 3]:  # Facade, Mediator
-                new_wmc *= 0.60  # 40% reduction
-                new_cbo *= 0.80  # 20% reduction
-            elif action == 4:  # ExtractClass
-                new_wmc *= 0.80
-                new_cbo *= 0.90
-        elif true_smell == 1:  # FeatureEnvy
-            if action == 0:  # Strategy
-                new_cbo *= 0.70  # 30% reduction
-                new_wmc *= 0.90
-            elif action == 4:  # ExtractClass
-                new_cbo *= 0.80
-        elif true_smell == 2:  # LongMethod
-            if action == 4:  # ExtractClass (representing Extract Method)
-                new_loc *= 0.70  # 30% reduction in this class's size / method size
-                new_wmc *= 0.85
-        elif true_smell == 3:  # DataClass
-            if action == 1:  # Observer
-                new_cbo *= 0.90
-        elif true_smell == 4:  # NoSmell
-            if action in [0, 1, 2, 3, 4]:  # False alarm (unnecessary refactoring)
-                new_cbo *= 1.15  # 15% increase due to delegation overhead
-                
-        final_wmc += new_wmc
-        final_cbo += new_cbo
-        final_loc += new_loc
-        
-    wmc_red = (initial_wmc - final_wmc) / max(1e-9, initial_wmc) * 100.0
-    cbo_red = (initial_cbo - final_cbo) / max(1e-9, initial_cbo) * 100.0
-    loc_red = (initial_loc - final_loc) / max(1e-9, initial_loc) * 100.0
+        if true_smell < 0 or true_smell >= len(SOFT_REWARD_MATRIX):
+            base = -2.0
+        else:
+            if action < 0 or action >= 6:
+                base = -2.0
+            else:
+                base = SOFT_REWARD_MATRIX[true_smell][action]
+        total_reward += base * class_weights.get(true_smell, 1.0)
+    return total_reward / max(1, len(test_ds))
+
+def compute_halstead_delta(preds: List[int], test_ds: SmellDataset) -> float:
+    """
+    Computes average simulated Halstead metric reduction on the test set.
+    For correct actions, simulates metric reduction according to env transitions.
+    For incorrect refactorings on NoSmell, simulates coupling overhead.
+    """
+    initial_sum = 0.0
+    final_sum = 0.0
     
-    return float(wmc_red), float(cbo_red), float(loc_red)
+    # Action transitions definitions
+    # FACADE=2, STRATEGY=0, EXTRACT=4, OBSERVER=1, MEDIATOR=3, NO_REFACTOR=5
+    for item, action in zip(test_ds, preds):
+        true_smell = int(item["y"].item())
+        h = item["halstead"].numpy() # [cyclomatic, lloc, V, D, E, B]
+        
+        c_before = h[0] + h[1] + h[2] + h[3] + h[4] + h[5]
+        initial_sum += c_before
+        
+        c_after = h[0]
+        curr_cyclomatic = h[0]
+        curr_lloc = h[1]
+        curr_V = h[2]
+        curr_D = h[3]
+        curr_E = h[4]
+        curr_B = h[5]
+        
+        if action == 2:      # God Class -> Facade
+            curr_cyclomatic *= 0.725
+            curr_lloc *= 0.80
+            curr_V *= 0.80
+            curr_E *= 0.80
+            curr_B *= 0.80
+        elif action == 0:    # FeatureEnvy -> Strategy
+            curr_D *= 0.80
+            curr_E *= 0.80
+        elif action == 4:    # LongMethod -> ExtractClass
+            curr_cyclomatic *= 0.65
+            curr_lloc *= 0.65
+            curr_V *= 0.65
+            curr_E *= 0.65
+            curr_B *= 0.65
+        elif action == 1:    # DataClass -> Observer
+            curr_D *= 0.825
+            curr_E *= 0.825
+        elif action == 3:    # Mediator
+            curr_cyclomatic *= 0.80
+            curr_D *= 0.875
+            curr_E *= 0.875
+        elif action == 5:    # NoRefactor
+            pass
+            
+        # Unnecessary refactoring penalty on clean code
+        if true_smell == 4 and action in [0, 1, 2, 3, 4]:
+            curr_D *= 1.15
+            curr_E *= 1.15
+            
+        c_after = curr_cyclomatic + curr_lloc + curr_V + curr_D + curr_E + curr_B
+        final_sum += c_after
+        
+    delta_pct = (initial_sum - final_sum) / max(1e-9, initial_sum) * 100.0
+    return float(delta_pct)
 
 # ──────────────────────────── Experiment Runner ────────────────────────────
 
 class ExperimentRunner:
-    """
-    Evaluates the agent against baselines and performs F1 breakdown.
-
-    Accepts any `agent` that implements:
-        agent.select_action(item: dict, epsilon: float) -> (int, Tensor)
-        agent.eval() / agent.train()
-    Both SupervisedSmellDetector and SmellDetectionAgent satisfy this contract.
-    """
     def __init__(self, agent: nn.Module, train_ds: SmellDataset, test_ds: SmellDataset, cfg: dict, device: torch.device):
         self.agent = agent
         self.train_ds = train_ds
@@ -240,15 +215,24 @@ class ExperimentRunner:
         os.makedirs(self.results_dir, exist_ok=True)
         self.log = logger
 
+        # Compute training class weights for reward metrics evaluation
+        counts = {}
+        for item in train_ds:
+            y = int(item["y"].item())
+            counts[y] = counts.get(y, 0) + 1
+        n_classes = cfg["smells"]["n_classes"]
+        total = sum(counts.values())
+        self.class_weights = {
+            cls_idx: total / (n_classes * count) if count > 0 else 1.0
+            for cls_idx, count in counts.items()
+        }
+
     @torch.no_grad()
     def _smellrl_preds(self, ds: SmellDataset) -> List[int]:
         self.agent.eval()
         preds = []
-        is_smell_predictor = getattr(self.agent, "n_classes", 5) == 5
         for item in ds:
             action, _ = self.agent.select_action(item, epsilon=0.0)
-            if is_smell_predictor:
-                action = SMELL_TO_PATTERN_DOMINANT.get(action, 5)
             preds.append(action)
         self.agent.train()
         return preds
@@ -259,7 +243,7 @@ class ExperimentRunner:
         methods = {}
 
         rand = RandomAgent()
-        methods["Random"] = [SMELL_TO_PATTERN_DOMINANT[rand.predict(it)] for it in self.test_ds]
+        methods["Random"] = [rand.predict(it) for it in self.test_ds]
 
         rule = RuleBasedAgent()
         methods["Rule-Based"] = [SMELL_TO_PATTERN_DOMINANT[rule.predict(it)] for it in self.test_ds]
@@ -274,11 +258,12 @@ class ExperimentRunner:
         rows = []
         for name, preds in methods.items():
             rep = classification_report_dict(true_y, preds, PATTERN_CLASSES)
-            wmc_red, cbo_red, loc_red = simulate_refactoring_impact(preds, self.test_ds)
+            mean_rwd = compute_cumulative_reward(preds, self.test_ds, self.class_weights)
+            halstead_delta = compute_halstead_delta(preds, self.test_ds)
+            
             results[name] = rep
-            results[name]["wmc_reduction"] = wmc_red
-            results[name]["cbo_reduction"] = cbo_red
-            results[name]["loc_reduction"] = loc_red
+            results[name]["mean_reward"] = mean_rwd
+            results[name]["halstead_delta"] = halstead_delta
             
             rows.append({
                 "Method": name, 
@@ -286,11 +271,10 @@ class ExperimentRunner:
                 "F1": round(rep["f1"], 4), 
                 "Precision": round(rep["precision"], 4), 
                 "Recall": round(rep["recall"], 4),
-                "WMC_Complexity_Reduction(%)": round(wmc_red, 2),
-                "CBO_Coupling_Reduction(%)": round(cbo_red, 2),
-                "LOC_Size_Reduction(%)": round(loc_red, 2)
+                "Mean_Cumulative_Reward": round(mean_rwd, 4),
+                "Mean_Halstead_Delta(%)": round(halstead_delta, 2)
             })
-            self.log.info(f"[Eval] {name:15s} | Acc={rep['accuracy']:.4f} | F1={rep['f1']:.4f} | WMC_red={wmc_red:.1f}% | CBO_red={cbo_red:.1f}%")
+            self.log.info(f"[Eval] {name:15s} | Acc={rep['accuracy']:.4f} | F1={rep['f1']:.4f} | MeanRwd={mean_rwd:+.3f} | MetricDelta={halstead_delta:.1f}%")
             
             if name == "SmellRL (Ours)":
                 cm = rep["confusion_matrix"]
