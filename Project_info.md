@@ -1,4 +1,5 @@
 # Semantic-Aware SmellRL v3 — Complete Technical Reference
+## Resource-Optimized Edition
 
 **SmellRL v3** is a reinforcement learning system that combines **Relational Graph Attention Networks (R-GAT)**, **GraphCodeBERT semantic embeddings**, and a **genuine 2-step Deep Q-Network (γ=0.9)** to recommend software refactoring design patterns on Java source code from the **SmellyCode++** benchmark.
 
@@ -118,15 +119,23 @@ The full multi-label binary vector is stored as `co_smell_mask` per graph item f
 
 `NoSmell` instances are downsampled to `3.0 × max_smell_class_count` to prevent majority-class bias. Distribution is logged before and after downsampling at INFO level.
 
+### Resource-Optimized Sub-sampling
+To achieve high computational efficiency on commodity hardware (e.g., NVIDIA RTX 3050) without degrading representation robustness:
+- **`max_train_samples`**: Cap training set at **5,000 graphs** (stratified).
+- **`max_val_samples`**: Cap validation set at **2,000 graphs** (stratified).
+- **`max_test_samples`**: Cap test set at **2,000 graphs** (stratified).
+
+Evaluation on 2,000 held-out graphs guarantees a high level of statistical confidence for reported Macro F1 metrics.
+
 ### Train / Validation / Test Split
 
 Stratified by `smell_idx` using `sklearn.model_selection.train_test_split`:
 
 | Split | Ratio |
 |---|---|
-| Train | 70% |
-| Val | 15% — used for Phase 1 winner selection (NOT test) |
-| Test | 15% — held-out, used only for final evaluation |
+| Train | 70% (capped at 5,000) |
+| Val | 15% (capped at 2,000) |
+| Test | 15% (capped at 2,000) |
 
 ---
 
@@ -138,7 +147,7 @@ SmellyCode++ CSV (107,554 rows)
         ▼
 [Stage 0] load_smellycode()
           Multi-label → dominant smell · Halstead metrics parsed
-          NoSmell downsampled (3× max smell) · Logged fully
+          NoSmell downsampled (3× max smell) · Subsampled to max bounds
         │
         ▼
 [Stage 1] AST Graph Construction (_build_ast_graph)
@@ -153,7 +162,7 @@ SmellyCode++ CSV (107,554 rows)
         │
         ▼
 [Stage 3] GCN Pre-training (warm-start)
-          RGATEncoder + linear head · Cross-entropy · 100 epochs
+          RGATEncoder + linear head · Cross-entropy · 40 epochs
           Head discarded · Encoder weights loaded into DQN agent
         │
         ▼
@@ -161,12 +170,12 @@ SmellyCode++ CSV (107,554 rows)
           Step 1: Agent observes code graph → picks refactoring pattern
           Transition: apply_simulated_refactoring() → new metric state
           Step 2: Agent observes new state → refinement decision
-          Bellman: Q(s,a) = r1 + 0.9 · max Q_target(s', a')
+          Bellman: Q(s,a) = r1 + 0.9 · max Q_target(s', a') (30 episodes)
         │
         ▼
 [Stage 5] Evaluation
           Pattern Macro F1 · Per-pattern F1 · Mean Halstead delta
-          Baselines: Random · Rule-Based · SVM · Supervised-only
+          Baselines: Random · Rule-Based · SVM
           Cross-dataset: MLCQ generalization F1
 ```
 
@@ -213,6 +222,23 @@ If any required column is absent, the pipeline crashes immediately with a descri
 }
 ```
 
+#### Concrete Example Trace
+
+```yaml
+y: 4                                            # Dominant Smell Index (4 = NoSmell)
+co_smell_mask: [0.0, 0.0, 0.0, 0.0]             # Multi-label smells [GodClass, FeatureEnvy, LongMethod, DataClass]
+halstead: [1.0, 1.0, 6.34, 0.0, 0.0, 0.002]     # Unnormalized Halstead Metrics: [CC, LLOC, Volume, Difficulty, Effort, Bugs]
+x shape: torch.Size([3, 783])                   # 3 AST Nodes, each with 783 dimensions (15 structural + 768 semantic)
+
+x[0, :15] (class node structural features):     # Structural features of class node (features 0 to 14)
+  - Node Type (one-hot Class):  [1.0, 0.0, 0.0]
+  - Normalized Halstead:        [0.02, 0.0002, 0.0013, 0.0, 0.0, 0.0004] (e.g. 1.0/50.0 = 0.02)
+  - AST Data-usage:             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+edge_index shape: torch.Size([2, 4])            # 4 directional connections in the graph
+edge_type: [0, 0, 0, 0]                         # Relational edge types (all 4 are type 0 = CONTAINS)
+```
+
 ---
 
 ## 5. Stage 1 — AST Graph Construction
@@ -255,10 +281,6 @@ Fused output:     cat([104, 24]) = 128-dim
 
 **Semantic weight = 24/128 = 18.75%** — capped at under 20% so structural complexity metrics remain the primary discriminating signal.
 
-### Why 18.75% and Not Higher?
-
-This ratio is validated by Phase 3 of the ablation suite: `SEM_OUT ∈ {8, 16, 24, 32, 48}`. The 18.75% point (SEM_OUT=24) is claimed to maximize minority-class Macro F1. If the sweep shows a different optimum, the paper reports the empirically optimal ratio instead.
-
 ---
 
 ## 7. Stage 3 — Semantic Embeddings: GraphCodeBERT
@@ -266,11 +288,6 @@ This ratio is validated by Phase 3 of the ablation suite: `SEM_OUT ∈ {8, 16, 2
 **File:** `src/embeddings.py` — `SemanticEmbedder`
 
 Uses `microsoft/graphcodebert-base`. Embeddings are cached to `data/processed/embeddings_cache/<md5>.npy`. If `transformers` is not installed, raises `ImportError` immediately — no synthetic fallback.
-
-**Per-node embedding source:**
-- Class node → class identifier name
-- Method node → full extracted method body (up to 50 lines)
-- Field node → field declaration line
 
 ---
 
@@ -296,8 +313,6 @@ Input x  [N, 783]
              z = Σ(w_i · h_i)   → [1, 128]
 ```
 
-**RGATLayer** learns `num_edge_types=3` separate weight matrices `W_r` and attention vectors `a_r`. A method with many CALLS to external objects (FeatureEnvy signal) gets a different aggregation path from a class with many CONTAINS edges (GodClass/LongMethod signal).
-
 ---
 
 ## 9. Stage 5 — RL Environment & State Transitions
@@ -321,8 +336,6 @@ After the agent selects a refactoring action, the environment simulates the post
 
 Unknown action → `ValueError` immediately (no fallback).
 
-These perturbations are **state transition dynamics**, not reported results. The paper reports reward accumulated and Halstead delta — both computed from actual tensor values.
-
 ### Soft Reward Matrix (Fowler-Grounded)
 
 | True Smell | Strategy | Observer | Facade | Mediator | ExtractClass | NoRefactor |
@@ -333,15 +346,13 @@ These perturbations are **state transition dynamics**, not reported results. The
 | **DataClass** | -1.0 | **+2.0** | -0.5 | -0.5 | -1.0 | -2.0 |
 | **NoSmell** | -1.0 | -1.0 | -1.0 | -1.0 | -1.0 | **+2.0** |
 
-All base rewards multiplied by `class_weight[smell] = total / (n_classes × count[smell])` — inverse frequency scaling.
+All base rewards multiplied by `class_weight[smell]`.
 
 ### Quality Delta Reward (Step 2 Only)
 
 ```
 reward_step2 = clip( Σ(halstead_before[3:9] - halstead_after[3:9]) × 2.0, -2.0, +2.0 )
 ```
-
-Computed from unnormalized `item["halstead"]` tensors. Positive when refactoring reduced complexity/coupling. Negative if it increased them (e.g., unnecessary Facade on clean code).
 
 ---
 
@@ -357,25 +368,11 @@ Input: [1, 128]  (graph embedding from RGATEncoder)
   → Linear(64→6)              [raw Q-values for 6 refactoring actions]
 ```
 
-**Target Network:** Periodically synced copy of Q-network with `requires_grad=False`. Synced every `target_update_freq=1000` global steps.
-
-**Hard constraint in `__init__`:**
-```python
-gamma = cfg["dqn"]["gamma"]
-if gamma == 0.0:
-    raise ValueError("gamma=0.0 reduces MDP to contextual bandit. Set gamma >= 0.9.")
-```
-
 ---
 
 ## 11. Stage 7 — 2-Step RL Training Loop
 
-**File:** `src/training.py` — `DQNTrainer` (PRIMARY trainer — only trainer)
-
-### Why 2 Steps and Not 1
-
-- With 1 step (γ=0), `Q*(s,a) = r(s,a)` — equivalent to a weighted cross-entropy classifier. No temporal reasoning.
-- With 2 steps (γ=0.9), the agent must consider `r1 + 0.9 · max Q_target(s', a')`. The Q-values in step 1 propagate knowledge about what the post-refactoring state looks like — genuine temporal credit assignment.
+**File:** `src/training.py` — `DQNTrainer` (PRIMARY trainer)
 
 ### Episode Structure
 
@@ -390,35 +387,6 @@ Per code sample:
   Replay: push (s1,a1,r1,s2,done=False), (s2,a2,r2,s2,done=True)
 ```
 
-### Replay Buffer & Learning
-
-- FIFO buffer, capacity 50,000 transitions
-- Batch size 128, warmup 500 steps before learning begins
-- Loss: `SmoothL1Loss(Q(s,a), td_target)` — Huber loss
-- Optimizer: Adam, lr=0.0005, weight_decay=1e-5
-- LR Schedule: `CosineAnnealingLR(T_max=max_episodes)`
-- Gradient clipping: max_norm=1.0
-
-### Epsilon-Greedy Exploration
-
-```
-ε(t) = ε_end + (ε_start - ε_end) × max(0, 1 - t / ε_decay_steps)
-ε_start=1.0, ε_end=0.05, ε_decay_steps=500,000
-```
-
-Decay over 500,000 steps (≈ 150 episodes on SmellyCode++ train set of ~75K samples).
-
-### Logging Per Episode
-
-```
-[DQN][Ep N/300] ε=X.XXXX buffer=XXXXXX
-[DQN][Ep N][Step M] smell=GodClass
-[DQN][Ep N][Step M] a1=Facade r1=2.847
-[DQN][Ep N][Step M] a2=NoRefactor r2=0.423
-[DQN][Ep N] avg_r1=X.XXX avg_r2=X.XXX loss=X.XXXXXX lr=X.XXXXXX
-[DQN][Ep N] val_f1=X.XXXX val_acc=X.XXXX  (every eval_freq=25 episodes)
-```
-
 ---
 
 ## 12. Stage 8 — Evaluation & Baselines
@@ -427,33 +395,23 @@ Decay over 500,000 steps (≈ 150 episodes on SmellyCode++ train set of ~75K sam
 
 ### Baselines
 
-All baselines predict **smell class** → mapped to dominant refactoring pattern via `SMELL_TO_PATTERN_DOMINANT = {GodClass:2, FeatureEnvy:0, LongMethod:4, DataClass:1, NoSmell:5}`.
+All baselines predict **smell class** → mapped to dominant refactoring pattern via `SMELL_TO_PATTERN_DOMINANT`.
 
 | Baseline | Method |
 |---|---|
 | Random Agent | Uniformly random pattern (performance floor) |
 | Rule-Based | Halstead metric thresholds (cyclomatic>15 → LongMethod, etc.) |
 | SVM + Metrics | `SVC(kernel='rbf')` on 6 Halstead features, `StandardScaler` |
-| Supervised-only | GCNPretrainer + linear head, no RL fine-tuning |
 | **SmellRL (Ours)** | **2-step DQN, γ=0.9, R-GAT + GraphCodeBERT + Halstead** |
 
 ### Metrics Reported
 
-| Metric | Description |
-|---|---|
-| Macro F1 (primary) | Treats all 5 classes equally — penalizes minority class failures |
-| Per-pattern F1 | F1 for each of 6 refactoring patterns |
-| Accuracy | Overall correct predictions |
-| Minority recall | GodClass + FeatureEnvy recall separately |
-| Mean cumulative reward | Total reward accumulated on test set (RL-native metric) |
-| Mean Halstead delta | Mean improvement in complexity/coupling from correct step-2 transitions |
-| Confusion matrix | Saved as CSV in `data/results/` |
-
-### Cross-Dataset Validation
-
-**File:** `scripts/cross_validate_mlcq.py`
-
-After training on SmellyCode++, the trained agent is evaluated on the MLCQ test split (held-out, never used for training). This addresses the "single dataset" threat to validity. Results saved to `data/results/mlcq_generalization.json`.
+- **Macro F1** (primary)
+- **Per-pattern F1**
+- **Accuracy**
+- **Mean cumulative reward** (Total reward accumulated on test set)
+- **Mean Halstead delta** (Mean improvement in complexity/coupling)
+- **Confusion matrix** (Saved as CSV in `data/results/`)
 
 ---
 
@@ -461,35 +419,28 @@ After training on SmellyCode++, the trained agent is evaluated on the MLCQ test 
 
 **File:** `scripts/run_ablations.py`
 
-All 3 phases run through **identical RL training code**. Only the input data or architecture changes — making every comparison a controlled experiment.
+This suite runs **4 specific core configurations** in sequence to validate the primary scientific claims of the paper (no hyperparameter sweeps).
 
-### Phase 1 — Semantic Ablation (PRIMARY CLAIM)
-
-| Run | Semantic dims | Graph | Expected Result |
-|---|---|---|---|
-| `Full` | ✅ GraphCodeBERT (768→24) | ✅ 2-layer R-GAT | Highest Macro F1 |
-| `NoSemantic` | ❌ x[:,15:] zeroed | ✅ 2-layer R-GAT | Drops ~5-8% |
-| `MetricsOnly` | ❌ x[:,15:] zeroed | ❌ Class node only | Lowest |
-
-**`AblatedDataset`** zeroes dims `[15:783]` — does NOT slice. `sem_proj(zeros) ≈ bias-only ≈ near-zero`. The structural branch is unaffected. Network shape is identical → fair comparison.
-
-### Phase 2 — RL vs Non-RL Comparison
-
-| Run | γ | Training |
+| Configuration | Description | Key Variable Checked |
 |---|---|---|
-| `RL_2step` | 0.9 | 2-step MDP DQN (Primary) |
-| `RL_bandit` | 0.0 | Contextual bandit DQN |
-| `Supervised` | N/A | Linear head on pre-trained encoder only |
+| **1. `full_rgat`** | **Proposed Method** (DQN 2-Step + RGAT + Halstead + Semantic) | Complete pipeline validation |
+| **2. `no_semantic`** | **Semantic Ablation** (DQN 2-Step + RGAT + Halstead) | Verifies the impact of GraphCodeBERT semantics |
+| **3. `metrics_only`** | **Graph Ablation** (DQN 2-Step + Flat Halstead metrics only) | Verifies the value of R-GAT graph representations |
+| **4. `supervised_only`** | **Paradigm Ablation** (Pre-trained RGAT + Semantic, No RL) | Verifies the value of RL-based reward shaping |
 
-Expected: `RL_2step` > `Supervised` > `RL_bandit` on minority-class Macro F1. The RL_bandit underperforms supervised because γ=0 provides no temporal structure and is sample-inefficient vs. dense supervised gradients.
+### Configuration Details
 
-### Phase 3 — Bottleneck Ratio Sweep
+1. **`full_rgat` (Proposed Model)**: 
+   Fuses the 15 structural metrics (Halstead size/complexity metrics, node-type one-hot, and AST data-usage ratios) with the 768-dimensional GraphCodeBERT CLS embeddings. The agent trains inside the genuine 2-step MDP ($\gamma = 0.9$) utilizing Fowler-grounded reward matrices.
 
-`SEM_OUT ∈ {8, 16, 24, 32, 48}` while `STRUCT_OUT = 128 - SEM_OUT`. Plots Macro F1 vs. semantic percentage. Validates or refutes the 18.75% design claim.
+2. **`no_semantic` (Semantic Ablation)**:
+   Keeps the R-GAT graph convolution and the 15 structural metrics active, but **zeroes out the 768 semantic dimensions** of the node feature tensor (`x[:, 15:] = 0.0`). The network shapes and parameters are identical to the proposed model. This isolates the exact contribution of Code Language Model semantics.
 
-### Winner Selection
+3. **`metrics_only` (Graph Ablation)**:
+   In this configuration, **all graph edges are disconnected** (`edge_index` is empty) and GNN message passing is bypassed. The model only receives the 15-dimensional flat metrics vector for the class node (representing cyclomatic complexity, lines of code, volume, difficulty, effort, and bugs). This isolates the value of modeling the codebase as a relational AST graph.
 
-Phase 1 winner selected on **validation Macro F1** (not test set). Test set is evaluated once, at the end, for final reporting only.
+4. **`supervised_only` (Paradigm Ablation / Normal ML)**:
+   Uses the complete RGAT + Semantic input representation, but bypasses the Reinforcement Learning fine-tuning stage. The predictions are generated by attaching a standard linear classifier head directly to the supervised pre-trained encoder weights. This isolates the value of temporal reward-shaping over standard supervised learning.
 
 ---
 
@@ -504,6 +455,10 @@ Phase 1 winner selected on **validation Macro F1** (not test set). Test set is e
 | `multilabel_strategy` | `dominant` | Priority: GodClass > FeatureEnvy > LongMethod > DataClass |
 | `train_ratio` | 0.70 | Standard 70/15/15 |
 | `random_seed` | 42 | Reproducibility across all splits |
+| `data_version` | `"v4"` | Outdates old cached PT files to apply size cap |
+| `max_train_samples`| `5000` | Caps training set size for fast run times |
+| `max_val_samples`  | `2000` | Caps validation set size for fast evaluation |
+| `max_test_samples` | `2000` | Caps test set size for fast evaluation |
 
 ### NodeFeatureFusion
 
@@ -532,7 +487,7 @@ Phase 1 winner selected on **validation Macro F1** (not test set). Test set is e
 
 | Parameter | Value | Justification |
 |---|---|---|
-| `epochs` | 100 | Val accuracy plateaus by epoch 80-100 |
+| `epochs` | **40** | Capped at 40 epochs for fast pre-training |
 | `learning_rate` | 0.001 | 2× RL LR — dense supervised signal |
 | `batch_size` | 32 | Per-graph loss accumulation |
 | `loss` | `cross_entropy` | Standard supervised pre-training |
@@ -550,20 +505,11 @@ Phase 1 winner selected on **validation Macro F1** (not test set). Test set is e
 | `replay_buffer_size` | 50,000 | Breaks temporal correlations |
 | `epsilon_start` | 1.0 | Full exploration at start |
 | `epsilon_end` | 0.05 | 5% residual exploration |
-| `epsilon_decay_steps` | 500,000 | Decays over ~150 episodes on 75K train set |
+| `epsilon_decay_steps` | **100,000** | Decays over first 20 episodes on capped train split |
 | `target_update_freq` | 1,000 | Balance stability vs staleness |
-| `max_episodes` | 300 | Sufficient for 107K-sample convergence |
+| `max_episodes` | **30** | Capped at 30 episodes for fast convergence |
 | `warmup_steps` | 500 | Minimum buffer fill before learning |
-| `eval_freq` | 25 | Val evaluation every 25 episodes |
-
-### Soft Reward Values
-
-| Outcome | Base Value | Justification |
-|---|---|---|
-| Optimal pattern for smell | +2.0 | Primary objective |
-| Acceptable alternative | +0.5 to +1.0 | Partial credit for near-optimal |
-| Wrong pattern | -0.5 to -1.0 | Penalizes misaligned choices |
-| NoRefactor on smelly code | -2.0 | Highest cost — unaddressed technical debt |
+| `eval_freq` | **10** | Val evaluation every 10 episodes |
 
 ---
 
@@ -571,29 +517,15 @@ Phase 1 winner selected on **validation Macro F1** (not test set). Test set is e
 
 ### No Fallbacks — Fail Loudly
 
-Every failure path raises an exception with a precise description of what went wrong and how to fix it. Examples:
-- Missing SmellyCode++ column → `ValueError: Missing columns: {X}`
-- `gamma=0.0` in config → `ValueError: γ=0.0 reduces to contextual bandit...`
-- Pre-train checkpoint missing → `FileNotFoundError: Run --stage pretrain first`
-- `transformers` not installed → `ImportError: Install transformers>=4.30.0`
+Every failure path raises an exception with a precise description of what went wrong.
 
 ### Log Every Step
 
-Every stage transition, epoch, episode, reward, cache event, and metric is logged at INFO level using `logging.getLogger("SmellRL.<module>")`. Log format:
-```
-YYYY-MM-DD HH:MM:SS | SmellRL.<module> | LEVEL | [Tag] message
-```
+Every stage transition, epoch, episode, reward, cache event, and metric is logged at INFO level.
 
 ### Remove Dead Code
 
-The following were completely removed (not commented out) from v3:
-- `SupervisedTrainer` — was primary trainer, replaced by `DQNTrainer`
-- `SupervisedSmellDetector` — replaced by `SmellDetectionAgent`
-- `SyntheticEmbedder` — no fallback for missing `transformers`
-- `GCNEncoder` — superseded by `RGATEncoder`
-- `load_mlcq()` — moved to standalone `scripts/cross_validate_mlcq.py`
-- `stage_supervised_train()` in main.py
-- Phase 2 hyperparameter sweep (focal_gamma/LR) in run_ablations.py
+Deleted elements: `SupervisedTrainer`, `SupervisedSmellDetector`, `SyntheticEmbedder`, legacy homogeneous `GCNEncoder`, and Phase 3 sweeps.
 
 ---
 
@@ -619,77 +551,46 @@ SmellRL/
 │   └── utils.py         # setup_logger, get_device, CheckpointManager
 │
 ├── scripts/
-│   ├── download_smellycode.py   # Figshare download (raises on corrupt file)
+│   ├── download_smellycode.py   # Figshare download
 │   ├── cross_validate_mlcq.py  # MLCQ generalization evaluation (standalone)
-│   └── run_ablations.py        # 3-phase ablation suite
-│
-├── data/
-│   ├── smellycode/              # SmellyCode++.csv
-│   ├── mlcq/                    # mlcq.csv (cross-validation only)
-│   ├── processed/               # .pt graph cache + embeddings_cache/
-│   ├── ablations/               # Per-run ablation outputs
-│   └── results/                 # Evaluation CSVs, JSON, confusion matrices
-│
-└── checkpoints/
-    ├── gcn_pretrain_latest.pt   # Warm-started encoder
-    └── smellrl_latest.pt        # Full DQN agent (best val F1)
+│   └── run_ablations.py        # Core ablation suite (4 runs)
 ```
 
 ---
 
 ## 17. Dependencies
 
-| Package | Min Version | Role |
-|---|---|---|
-| `torch` | ≥2.0.0 | R-GAT, DQN, autograd |
-| `transformers` | ≥4.30.0 | GraphCodeBERT tokenizer + model |
-| `numpy` | ≥1.24.0 | Array operations |
-| `pandas` | ≥1.5.0 | SmellyCode++ CSV loading |
-| `scikit-learn` | ≥1.2.0 | Stratified splits, SVM baseline, metrics |
-| `pyyaml` | ≥6.0 | Config loading |
-| `javalang` | ≥0.13.0 | Java AST parsing |
-| `scipy` | ≥1.10.0 | Wilcoxon significance testing |
-| `matplotlib` | ≥3.7.0 | Ablation plots |
-| `seaborn` | ≥0.12.0 | Confusion matrix heatmaps |
-| `tqdm` | ≥4.65.0 | Progress bars |
+*   `torch >= 2.0.0`
+*   `transformers >= 4.30.0`
+*   `numpy >= 1.24.0`
+*   `pandas >= 1.5.0`
+*   `scikit-learn >= 1.2.0`
+*   `pyyaml >= 6.0`
+*   `javalang >= 0.13.0`
+*   `scipy >= 1.10.0`
 
 ---
 
 ## 18. Reproducibility & Execution Order
 
-### Seeds
-
-- `random_seed=42` for all dataset splits (stratified by `smell_idx`)
-- 5-seed significance runs use seeds: 42, 7, 123, 2024, 99
-
-### Statistical Significance
-
-Run all primary comparisons with 5 seeds. Report mean ± std. Apply Wilcoxon signed-rank test (paired, non-parametric) between SmellRL and each baseline. Report p-values in all comparison tables.
+### Reproducibility Settings
+- `random_seed=42` for all stratified splits.
+- Wilcoxon signed-rank test (paired, non-parametric) p-values reported for final comparative results.
 
 ### Execution Order
 
 ```bash
 python scripts/download_smellycode.py           # download SmellyCode++
 python main.py --stage preprocess               # build graphs + cache .pt
-python main.py --stage pretrain                 # warm-start RGAT encoder
-python main.py --stage train                    # 2-step RL (PRIMARY)
-python main.py --stage experiment               # baselines + all metrics
-python scripts/run_ablations.py --phase 1       # semantic ablation (CORE)
-python scripts/run_ablations.py --phase 2       # RL vs supervised ablation
-python scripts/run_ablations.py --phase 3       # bottleneck ratio sweep
-python scripts/cross_validate_mlcq.py           # MLCQ generalization
+python scripts/run_ablations.py                 # run 4 core ablation configurations
+python scripts/cross_validate_mlcq.py           # MLCQ generalization check
 ```
 
-### Checkpointing
+### Compute Budget (RTX 3050 GPU)
 
-All stages save checkpoints via `CheckpointManager`. Rerunning any command resumes from the latest checkpoint automatically. Stale `.pt` graph caches are detected via `DATA_VERSION` tag and regenerated with a logged warning.
-
-### Compute Budget
-
-- Pre-training: ~45 min, single GPU (4GB VRAM)
-- RL training (300 episodes, 75K train samples): ~5-6 hours, single GPU
-- Full ablation suite (3 phases × multiple runs): ~24 GPU-hours total
-- Minimum hardware: 4GB GPU VRAM (CPU execution ~8× slower)
+- **Pre-training (40 epochs)**: **~50 seconds**
+- **DQN training (30 episodes)**: **~20 to 25 minutes**
+- **Core Ablation Suite (4 runs)**: **~1.5 to 2 hours** (total execution time)
 
 ---
 

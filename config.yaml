@@ -14,7 +14,10 @@ dataset:
   test_ratio: 0.15
   random_seed: 42
   nosmell_ratio: 3.0  # downsample NoSmell to 3.0 * largest smell count
-  data_version: "v3"
+  data_version: "v4"  # Bumped to v4 to invalidate old caches and apply limits
+  max_train_samples: 5000  # Cap training set at 5,000 for fast runs
+  max_val_samples: 2000    # Cap validation set at 2,000 for fast eval
+  max_test_samples: 2000   # Cap test set at 2,000 for fast test
 
 smells:
   classes: ["GodClass", "FeatureEnvy", "LongMethod", "DataClass", "NoSmell"]
@@ -57,20 +60,20 @@ dqn:
   replay_buffer_size: 50000
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay_steps: 500000  # decay exploration over 500K steps
+  epsilon_decay_steps: 100000  # Scaled down to match 30-episode run
   target_update_freq: 1000
-  max_episodes: 300
+  max_episodes: 30             # Cap at 30 episodes for fast convergence
   warmup_steps: 500
-  eval_freq: 25
+  eval_freq: 10                # Eval val set every 10 episodes
 
 gcn_pretrain:
-  epochs: 100
+  epochs: 40                   # Cap at 40 pretrain epochs (plenty for warm-start)
   learning_rate: 0.001
   batch_size: 32
   checkpoint_freq: 10
 
 training:
-  checkpoint_freq: 50
-  log_freq: 10
+  checkpoint_freq: 10
+  log_freq: 5
 
 device: "auto"

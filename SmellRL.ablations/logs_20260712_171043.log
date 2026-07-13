@@ -1,0 +1,9 @@
+2026-07-12 17:10:43 | logs                 | INFO     | [Logger] Initialized. Writing to: SmellRL.ablations\logs_20260712_171043.log
+2026-07-12 17:10:43 | logs                 | INFO     | ╔══════════════════════════════════════════════════╗
+2026-07-12 17:10:43 | logs                 | INFO     | ║     SmellRL Minimal Core Ablation Suite (v3)    ║
+2026-07-12 17:10:43 | logs                 | INFO     | ╚══════════════════════════════════════════════════╝
+2026-07-12 17:10:43 | logs                 | INFO     | Device: cuda
+2026-07-12 17:10:50 | logs                 | INFO     | ═ Running Core Spec: full_rgat ═
+2026-07-12 17:10:50 | logs                 | INFO     | [full_rgat] Pre-training encoder...
+2026-07-12 18:21:26 | logs                 | INFO     | [Checkpoint] Loaded step=40 from data/results\ablation\full_rgat\gcn_pretrain_latest.pt
+2026-07-12 18:21:26 | logs                 | INFO     | [full_rgat] Running 2-step DQN training (gamma=0.9)...

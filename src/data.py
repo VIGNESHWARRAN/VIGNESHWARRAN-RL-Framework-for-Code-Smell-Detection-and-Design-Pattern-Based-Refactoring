@@ -74,21 +74,69 @@ def dominant_smell(row: pd.Series) -> str:
             return smell
     return "NoSmell"
 
+def check_single_code(code_str: str) -> bool:
+    try:
+        try:
+            javalang.parse.parse(code_str)
+        except Exception:
+            javalang.parse.parse(f"class _Dummy {{ {code_str} }}")
+        return True
+    except Exception:
+        return False
+
 def load_smellycode(csv_path: str, nosmell_ratio: float = 3.0) -> pd.DataFrame:
     logger.info(f"[Data] Loading SmellyCode++ CSV from {csv_path}")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"SmellyCode++ CSV file not found at: {csv_path}")
 
-    df = pd.read_csv(csv_path)
-    df.columns = [c.strip() for c in df.columns]
+    cache_csv_path = csv_path.replace(".csv", f"_parseable_{DATA_VERSION}.csv")
+    if os.path.exists(cache_csv_path):
+        logger.info(f"[Data] Found versioned parseable cache: {cache_csv_path}")
+        df = pd.read_csv(cache_csv_path)
+    else:
+        df = pd.read_csv(csv_path)
+        df.columns = [c.strip() for c in df.columns]
 
-    REQUIRED_COLS = {"Code", "GodClass", "FeatureEnvy", "LongMethod", "DataClass",
-                     "lloc", "cyclomatic", "V", "D", "E", "B"}
-    missing = REQUIRED_COLS - set(df.columns)
-    if missing:
-        raise ValueError(f"SmellyCode++ CSV missing columns: {missing}. Got: {list(df.columns)}")
+        # Map raw SmellyCode++ Figshare CSV columns to internal formats
+        rename_map = {
+            "God class": "GodClass",
+            "Feature envy": "FeatureEnvy",
+            "Long method": "LongMethod",
+            "Data class": "DataClass",
+            "Logical Lines": "lloc",
+            "Cyclomatic Complexity": "cyclomatic",
+            "Volume": "V",
+            "Difficulty": "D",
+            "Effort": "E",
+            "Bugs": "B"
+        }
+        df = df.rename(columns=rename_map)
 
-    logger.info(f"[Data] SmellyCode++ loaded: {len(df)} raw rows")
+        REQUIRED_COLS = {"Code", "GodClass", "FeatureEnvy", "LongMethod", "DataClass",
+                         "lloc", "cyclomatic", "V", "D", "E", "B"}
+        missing = REQUIRED_COLS - set(df.columns)
+        if missing:
+            raise ValueError(f"SmellyCode++ CSV missing columns: {missing}. Got: {list(df.columns)}")
+
+        logger.info(f"[Data] SmellyCode++ loaded: {len(df)} raw rows. Validating AST parseability...")
+
+        # Multi-process verification of AST parseability
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        num_workers = max(1, multiprocessing.cpu_count() - 1)
+        
+        codes = [str(row["Code"]) if pd.notna(row["Code"]) else "" for _, row in df.iterrows()]
+        
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            results = list(executor.map(check_single_code, codes, chunksize=100))
+
+        parseable_indices = [i for i, ok in enumerate(results) if ok]
+        parse_success = len(parseable_indices)
+        logger.info(f"[Data] AST pre-validation: {parse_success} / {len(df)} rows parsed successfully.")
+        
+        df = df.iloc[parseable_indices].reset_index(drop=True)
+        df.to_csv(cache_csv_path, index=False)
+        logger.info(f"[Data] Saved versioned parseable cache: {cache_csv_path}")
 
     # Map multi-label to dominant smell
     df["smell_label"] = df.apply(dominant_smell, axis=1)
@@ -397,6 +445,22 @@ def run_preprocessing(cfg: dict) -> Tuple["SmellDataset", "SmellDataset", "Smell
     train_df, temp_df = train_test_split(df, test_size=1 - tr, stratify=df["smell_idx"], random_state=seed)
     val_size = vr / (1 - tr)
     val_df, test_df = train_test_split(temp_df, test_size=1 - val_size, stratify=temp_df["smell_idx"], random_state=seed)
+
+    # Subsample train, val, and test dataframes to enforce maximum execution bounds
+    max_train = cfg["dataset"].get("max_train_samples")
+    if max_train and len(train_df) > max_train:
+        train_df, _ = train_test_split(train_df, train_size=max_train, stratify=train_df["smell_idx"], random_state=seed)
+        logger.info(f"[Data] Subsampled training dataset to {len(train_df)} rows")
+        
+    max_val = cfg["dataset"].get("max_val_samples")
+    if max_val and len(val_df) > max_val:
+        val_df, _ = train_test_split(val_df, train_size=max_val, stratify=val_df["smell_idx"], random_state=seed)
+        logger.info(f"[Data] Subsampled validation dataset to {len(val_df)} rows")
+        
+    max_test = cfg["dataset"].get("max_test_samples")
+    if max_test and len(test_df) > max_test:
+        test_df, _ = train_test_split(test_df, train_size=max_test, stratify=test_df["smell_idx"], random_state=seed)
+        logger.info(f"[Data] Subsampled test dataset to {len(test_df)} rows")
 
     train_ds = SmellDataset(train_df, embedder)
     val_ds   = SmellDataset(val_df, embedder)

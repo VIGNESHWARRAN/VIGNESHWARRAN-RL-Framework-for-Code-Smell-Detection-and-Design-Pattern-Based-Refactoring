@@ -1,20 +1,15 @@
 """
-SmellRL v3 — Ablation Study Runner
+SmellRL v3 — Minimal Core Ablation Study
 Refactoring recommendations using SmellyCode++ dataset and 2-step DQN.
 
-Methodology (Three Phases):
-  Phase 1 — Semantic Ablation (CORE CLAIM):
-    A. Full: R-GAT + Halstead + GraphCodeBERT semantic (18.75% bottleneck)
-    B. NoSemantic: R-GAT + Halstead only (semantic features zeroed)
-    C. MetricsOnly: No graph (class node features only, no GNN propagation)
+This script executes only the 4 core configurations required to substantiate
+the main claims of the paper (no hyperparameter sweeps).
 
-  Phase 2 — RL vs Non-RL Comparison:
-    A. RL 2-Step: DQN with γ=0.9 (PRIMARY)
-    B. RL Bandit: DQN with γ=0.0 (ablation contextual bandit)
-    C. Supervised: RGAT pre-trainer + linear head (no RL training)
-
-  Phase 3 — Bottleneck Ratio Sweep:
-    Sweeps SEM_OUT dimensions in {8, 16, 24, 32, 48}
+Configurations:
+  1. full_rgat        : Proposed (RL 2-Step + RGAT + Halstead + Semantic)
+  2. no_semantic      : Semantic Ablation (RL 2-Step + RGAT + Halstead only)
+  3. metrics_only     : Graph Ablation (RL 2-Step + Flat Halstead metrics only)
+  4. supervised_only  : Paradigm Ablation (Pre-trained RGAT + linear head, no RL)
 
 All results are saved per-run in isolated directories under data/ablations/
 """
@@ -25,7 +20,6 @@ import logging
 import os
 import sys
 import json
-import time
 
 import pandas as pd
 import torch
@@ -35,8 +29,8 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.utils      import setup_logger, get_device, CheckpointManager
-from src.data       import run_preprocessing, SmellDataset, PATTERN_CLASSES, NodeFeatureFusion
-from src.models     import SmellDetectionAgent, RGATEncoder
+from src.data       import run_preprocessing, SmellDataset, PATTERN_CLASSES
+from src.models     import SmellDetectionAgent, NodeFeatureFusion
 from src.training   import GCNPretrainer, DQNTrainer
 from src.evaluation import classification_report_dict, SMELL_TO_PATTERN_DOMINANT
 
@@ -85,48 +79,40 @@ class MetricsOnlyDataset(torch.utils.data.Dataset):
         item["edge_type"]  = torch.zeros(0, dtype=torch.long)
         return item
 
-# ──────────────────────────── Phase 1 Runs ────────────────────────────
+# ──────────────────────────── Core Configurations ──────────────────────────
 
-PHASE_1_RUNS = [
+CORE_RUNS = [
     {
         "name": "full_rgat",
-        "description": "Full (RGAT + Halstead + Semantic)",
+        "description": "Proposed (RL 2-Step + RGAT + Halstead + Semantic)",
         "use_semantic": True,
         "metrics_only": False,
+        "is_rl": True,
+        "gamma": 0.9
     },
     {
         "name": "no_semantic",
-        "description": "NoSemantic (RGAT + Halstead only)",
+        "description": "Semantic Ablation (RL 2-Step + RGAT + Halstead only)",
         "use_semantic": False,
         "metrics_only": False,
+        "is_rl": True,
+        "gamma": 0.9
     },
     {
         "name": "metrics_only",
-        "description": "MetricsOnly (No Graph, Structural Only)",
+        "description": "Graph Ablation (RL 2-Step + Flat Halstead metrics only)",
         "use_semantic": False,
         "metrics_only": True,
-    }
-]
-
-# ──────────────────────────── Phase 2 Runs ────────────────────────────
-
-PHASE_2_RUNS = [
-    {
-        "name": "rl_2step",
-        "description": "RL 2-Step (gamma=0.9)",
-        "gamma": 0.9,
-        "is_rl": True
-    },
-    {
-        "name": "rl_bandit",
-        "description": "RL Bandit (gamma=0.0)",
-        "gamma": 0.0,
-        "is_rl": True
+        "is_rl": True,
+        "gamma": 0.9
     },
     {
         "name": "supervised_only",
-        "description": "Supervised (No RL Fine-Tuning)",
-        "is_rl": False
+        "description": "Paradigm Ablation (RGAT + Semantic, No RL)",
+        "use_semantic": True,
+        "metrics_only": False,
+        "is_rl": False,
+        "gamma": 0.9 # ignored when not is_rl
     }
 ]
 
@@ -140,7 +126,6 @@ def _make_synthetic_ds(n: int, feature_dim: int = 783) -> SmellDataset:
         ei = torch.tensor([[0, 1, 0, 2], [1, 0, 2, 0]], dtype=torch.long)
         et = torch.tensor([0, 0, 1, 1], dtype=torch.long)
         y  = torch.tensor(i % 5, dtype=torch.long)
-        # unnormalized Halstead vector
         hal = torch.randn(6)
         co_smell = torch.zeros(4)
         graphs.append({
@@ -180,7 +165,7 @@ def run_single(
     log:         logging.Logger,
     is_dry_run:  bool = False,
 ) -> dict:
-    log.info(f"═ Running specification: {run_spec['name']} ═")
+    log.info(f"═ Running Core Spec: {run_spec['name']} ═")
     
     # Isolation copy of config
     cfg = copy.deepcopy(base_cfg)
@@ -234,22 +219,14 @@ def run_single(
         trainer.train(train_ds, val_ds)
     else:
         log.info(f"[{run_spec['name']}] Skipping RL stage (supervised pre-training weights only).")
-        # In supervised mode, we need to map the output smell classifier head directly to pattern outputs
-        # We simulate the supervised baseline by projecting the pre-trained smell classifier head.
-        # But to be select_action compatible: SmellDetectionAgent needs to behave like classification head
-        # We manually map the linear classifer's predictions in agent.q network
-        # by copying the pre-trained weights for evaluation.
         classifier_state = payload["models"]["classifier"]
-        # Copy the pre-trained classifier linear weights to q-network output layer, padding if necessary
-        # smells n_classes=5 -> patterns n_classes=6
         with torch.no_grad():
             agent.q.net[-1].weight[:5] = classifier_state["weight"]
             agent.q.net[-1].bias[:5]   = classifier_state["bias"]
-            # Class 5 (NoRefactor) maps to Smell Class 4 (NoSmell)
             agent.q.net[-1].weight[5]  = classifier_state["weight"][4]
             agent.q.net[-1].bias[5]    = classifier_state["bias"][4]
 
-    # Evaluate on validation dataset (for model selection / validation winner)
+    # Evaluate on validation dataset
     val_report = evaluate_agent(agent, val_ds)
     val_f1 = val_report.get("f1", 0.0)
 
@@ -259,7 +236,6 @@ def run_single(
 
     log.info(f"[{run_spec['name']}] Complete. Val F1: {val_f1:.4f} | Test F1: {test_f1:.4f}")
 
-    # Output results
     results = {
         "name":         run_spec["name"],
         "description":  run_spec["description"],
@@ -276,8 +252,7 @@ def run_single(
 # ──────────────────────────── Main runner ──────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="SmellRL v3 Ablation Suite")
-    parser.add_argument("--phase", type=int, choices=[1, 2, 3], help="Specify Phase (1, 2, or 3) to run.")
+    parser = argparse.ArgumentParser(description="SmellRL v3 Minimal Ablation Suite")
     parser.add_argument("--test", action="store_true", help="Dry run mode using tiny synthetic dataset.")
     args = parser.parse_args()
 
@@ -285,13 +260,12 @@ def main():
     log = setup_logger(cfg["paths"]["log_dir"], "SmellRL.ablations")
 
     log.info("╔══════════════════════════════════════════════════╗")
-    log.info("║        SmellRL Ablation Suite  (v3)             ║")
+    log.info("║     SmellRL Minimal Core Ablation Suite (v3)    ║")
     log.info("╚══════════════════════════════════════════════════╝")
 
     device = get_device(cfg.get("device", "auto"))
     log.info(f"Device: {device}")
 
-    # 1. Dataset loading
     if args.test:
         log.info("=== Smoke Test active: generating synthetic datasets ===")
         train_ds = _make_synthetic_ds(16)
@@ -305,50 +279,10 @@ def main():
 
     results_summary = []
     
-    # Phase 1: Semantic Ablations
-    if args.phase is None or args.phase == 1:
-        log.info("══════════════ PHASE 1: Semantic Ablations ══════════════")
-        best_val_f1 = -1.0
-        winner_name = None
-        
-        for run_spec in PHASE_1_RUNS:
-            res = run_single(run_spec, cfg, base_dir, train_ds, val_ds, test_ds, device, log, is_dry_run=args.test)
-            results_summary.append(res)
-            
-            if res["val_f1"] > best_val_f1:
-                best_val_f1 = res["val_f1"]
-                winner_name = res["name"]
-
-        log.info(f"Phase 1 complete. Winner based on Validation F1: {winner_name} (Val F1: {best_val_f1:.4f})")
-
-    # Phase 2: RL vs Non-RL Comparison
-    if args.phase is None or args.phase == 2:
-        log.info("══════════════ PHASE 2: RL vs Non-RL Comparison ══════════════")
-        for run_spec in PHASE_2_RUNS:
-            res = run_single(run_spec, cfg, base_dir, train_ds, val_ds, test_ds, device, log, is_dry_run=args.test)
-            results_summary.append(res)
-
-    # Phase 3: Bottleneck Sweep
-    if args.phase is None or args.phase == 3:
-        log.info("══════════════ PHASE 3: Bottleneck Sweep ══════════════")
-        # Sweep SEM_OUT in [8, 16, 24, 32, 48]
-        for sem_out in [8, 16, 24, 32, 48]:
-            struct_out = 128 - sem_out
-            spec = {
-                "name": f"bottleneck_sem{sem_out}",
-                "description": f"Sweep: NodeFeatureFusion (struct={struct_out}, sem={sem_out})",
-                "use_semantic": True,
-                "metrics_only": False,
-                "is_rl": True,
-                "gamma": 0.9
-            }
-            # Temporarily overwrite NodeFeatureFusion outputs in config or mock it
-            # We overwrite SEM_OUT and STRUCT_OUT values in the class directly since they are static fields:
-            NodeFeatureFusion.SEM_OUT = sem_out
-            NodeFeatureFusion.STRUCT_OUT = struct_out
-            
-            res = run_single(spec, cfg, base_dir, train_ds, val_ds, test_ds, device, log, is_dry_run=args.test)
-            results_summary.append(res)
+    # Run the 4 core experiments in sequence
+    for run_spec in CORE_RUNS:
+        res = run_single(run_spec, cfg, base_dir, train_ds, val_ds, test_ds, device, log, is_dry_run=args.test)
+        results_summary.append(res)
 
     # Compile and aggregate final reports
     summary_path = os.path.join(base_dir, "summary.csv")

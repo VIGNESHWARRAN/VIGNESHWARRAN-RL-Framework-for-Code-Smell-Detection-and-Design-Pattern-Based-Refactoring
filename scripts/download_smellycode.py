@@ -11,7 +11,7 @@ import sys
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(name)s | %(levelname)s | %(message)s")
 log = logging.getLogger("download")
 
-URL = "https://figshare.com/ndownloader/files/52744561"
+URL = "https://ndownloader.figshare.com/files/52714583"
 OUT = "data/smellycode/SmellyCode++.csv"
 MIN_BYTES = 10 * 1024 * 1024  # 10 MB sanity check
 
