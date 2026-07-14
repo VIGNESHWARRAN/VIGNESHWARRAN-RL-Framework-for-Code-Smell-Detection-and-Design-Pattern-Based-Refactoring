@@ -1,0 +1,10 @@
+2026-07-14 08:18:18 | logs                 | INFO     | [Logger] Initialized. Writing to: SmellRL.ablations\logs_20260714_081817.log
+2026-07-14 08:18:18 | logs                 | INFO     | ╔══════════════════════════════════════════════════╗
+2026-07-14 08:18:18 | logs                 | INFO     | ║     SmellRL Minimal Core Ablation Suite (v3)    ║
+2026-07-14 08:18:18 | logs                 | INFO     | ╚══════════════════════════════════════════════════╝
+2026-07-14 08:18:18 | logs                 | INFO     | Device: cuda
+2026-07-14 08:18:22 | logs                 | INFO     | ═ Spec full_rgat already complete. Loading cached results. ═
+2026-07-14 08:18:22 | logs                 | INFO     | ═ Spec no_semantic already complete. Loading cached results. ═
+2026-07-14 08:18:22 | logs                 | INFO     | ═ Spec metrics_only already complete. Loading cached results. ═
+2026-07-14 08:18:22 | logs                 | INFO     | ═ Running Core Spec: supervised_only ═
+2026-07-14 08:18:22 | logs                 | INFO     | [supervised_only] Pre-training encoder...

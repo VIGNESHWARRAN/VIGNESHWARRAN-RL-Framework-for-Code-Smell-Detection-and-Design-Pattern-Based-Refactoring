@@ -11,7 +11,7 @@ env/
 venv/
 
 # Data (large files)
-data
+
 data/processed_with_embeddings/
 data/processed_with_embeddings_500eps/
 data/processed_without_embeddings_150eps/
@@ -20,10 +20,8 @@ data/processed_with_embeddings_150eps
 data/mlcq/
 data/processed
 basepaper_agent/
-data/results
 
-# But keep results
-data/results/
+data/results/ablation/*/*.pt
 
 # Checkpoints (large model files)
 checkpoints/
@@ -40,3 +38,5 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+smellycode

@@ -74,15 +74,8 @@ def dominant_smell(row: pd.Series) -> str:
             return smell
     return "NoSmell"
 
-def check_single_code(code_str: str) -> bool:
-    try:
-        try:
-            javalang.parse.parse(code_str)
-        except Exception:
-            javalang.parse.parse(f"class _Dummy {{ {code_str} }}")
-        return True
-    except Exception:
-        return False
+from src.ast_check import check_single_code
+
 
 def load_smellycode(csv_path: str, nosmell_ratio: float = 3.0) -> pd.DataFrame:
     logger.info(f"[Data] Loading SmellyCode++ CSV from {csv_path}")

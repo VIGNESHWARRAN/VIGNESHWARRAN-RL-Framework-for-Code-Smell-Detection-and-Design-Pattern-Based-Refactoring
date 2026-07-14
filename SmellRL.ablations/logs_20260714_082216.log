@@ -1,0 +1,14 @@
+2026-07-14 08:22:16 | logs                 | INFO     | [Logger] Initialized. Writing to: SmellRL.ablations\logs_20260714_082216.log
+2026-07-14 08:22:16 | logs                 | INFO     | ╔══════════════════════════════════════════════════╗
+2026-07-14 08:22:16 | logs                 | INFO     | ║     SmellRL Minimal Core Ablation Suite (v3)    ║
+2026-07-14 08:22:16 | logs                 | INFO     | ╚══════════════════════════════════════════════════╝
+2026-07-14 08:22:16 | logs                 | INFO     | Device: cuda
+2026-07-14 08:22:21 | logs                 | INFO     | ═ Spec full_rgat already complete. Loading cached results. ═
+2026-07-14 08:22:21 | logs                 | INFO     | ═ Spec no_semantic already complete. Loading cached results. ═
+2026-07-14 08:22:21 | logs                 | INFO     | ═ Spec metrics_only already complete. Loading cached results. ═
+2026-07-14 08:22:21 | logs                 | INFO     | ═ Running Core Spec: supervised_only ═
+2026-07-14 08:22:21 | logs                 | INFO     | [Checkpoint] Loaded step=40 from data/results\ablation\supervised_only\gcn_pretrain_latest.pt
+2026-07-14 08:22:21 | logs                 | INFO     | [supervised_only] Pre-training encoder checkpoint found at step=40 — skipping pre-training.
+2026-07-14 08:22:21 | logs                 | INFO     | [supervised_only] Skipping RL stage (supervised pre-training weights only).
+2026-07-14 08:22:31 | logs                 | INFO     | [supervised_only] Complete. Val F1: 0.6596 | Test F1: 0.6833
+2026-07-14 08:22:31 | logs                 | INFO     | Aggregated ablation results summary saved to data/results\ablation\summary.csv

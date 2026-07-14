@@ -165,13 +165,20 @@ def run_single(
     log:         logging.Logger,
     is_dry_run:  bool = False,
 ) -> dict:
-    log.info(f"═ Running Core Spec: {run_spec['name']} ═")
-    
     # Isolation copy of config
     cfg = copy.deepcopy(base_cfg)
     run_dir = os.path.join(base_dir, run_spec["name"])
     os.makedirs(run_dir, exist_ok=True)
     cfg["paths"]["checkpoint_dir"] = run_dir
+
+    # Check if results are already completed and cached
+    results_path = os.path.join(run_dir, "results.json")
+    if not is_dry_run and os.path.exists(results_path):
+        log.info(f"═ Spec {run_spec['name']} already complete. Loading cached results. ═")
+        with open(results_path, "r") as f:
+            return json.load(f)
+
+    log.info(f"═ Running Core Spec: {run_spec['name']} ═")
 
     # Adapt dataset based on run specifications
     use_semantic = run_spec.get("use_semantic", True)
@@ -194,16 +201,21 @@ def run_single(
         cfg["dqn"]["epsilon_decay_steps"] = 20
 
     # 1. Supervised pre-training (always GCNPretrainer on smell index)
-    log.info(f"[{run_spec['name']}] Pre-training encoder...")
-    pretrainer = GCNPretrainer(cfg, device)
-    pretrainer.train(train_ds, val_ds)
+    gcn_ckpt = CheckpointManager(run_dir, "gcn_pretrain", log)
+    payload = gcn_ckpt.load_latest()
+    
+    if payload and "models" in payload and "gcn" in payload["models"] and payload.get("step", 0) >= cfg["gcn_pretrain"]["epochs"]:
+        log.info(f"[{run_spec['name']}] Pre-training encoder checkpoint found at step={payload['step']} — skipping pre-training.")
+    else:
+        log.info(f"[{run_spec['name']}] Pre-training encoder...")
+        pretrainer = GCNPretrainer(cfg, device)
+        pretrainer.train(train_ds, val_ds)
+        payload = gcn_ckpt.load_latest()
 
     # Load pre-trained encoder weights into the agent
     feature_dim = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else 783
     agent = SmellDetectionAgent(cfg, feature_dim, device)
     
-    gcn_ckpt = CheckpointManager(run_dir, "gcn_pretrain", log)
-    payload = gcn_ckpt.load_latest()
     if not payload or "models" not in payload or "gcn" not in payload["models"]:
         raise RuntimeError("Supervised pre-training did not produce expected checkpoint.")
     agent.gcn.load_state_dict(payload["models"]["gcn"])
@@ -220,11 +232,26 @@ def run_single(
     else:
         log.info(f"[{run_spec['name']}] Skipping RL stage (supervised pre-training weights only).")
         classifier_state = payload["models"]["classifier"]
-        with torch.no_grad():
-            agent.q.net[-1].weight[:5] = classifier_state["weight"]
-            agent.q.net[-1].bias[:5]   = classifier_state["bias"]
-            agent.q.net[-1].weight[5]  = classifier_state["weight"][4]
-            agent.q.net[-1].bias[5]    = classifier_state["bias"][4]
+        
+        # Load the classifier layer
+        classifier = nn.Linear(cfg["gcn"]["output_dim"], cfg["smells"]["n_classes"]).to(device)
+        classifier.load_state_dict(classifier_state)
+        classifier.eval()
+        
+        # Monkey-patch select_action to evaluate the supervised classifier and map to dominant pattern
+        import types
+        def supervised_select_action(self, graph: dict, epsilon: float):
+            x          = graph["x"].to(self.device)
+            edge_index = graph["edge_index"].to(self.device)
+            edge_type  = graph["edge_type"].to(self.device)
+            with torch.no_grad():
+                state = self.gcn(x, edge_index, edge_type)
+                logits = classifier(state)
+                pred_smell = int(logits.argmax(dim=1).item())
+                action = SMELL_TO_PATTERN_DOMINANT[pred_smell]
+            return action, state.detach()
+            
+        agent.select_action = types.MethodType(supervised_select_action, agent)
 
     # Evaluate on validation dataset
     val_report = evaluate_agent(agent, val_ds)

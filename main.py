@@ -13,14 +13,7 @@ import argparse
 import logging
 import os
 import sys
-import torch
 import yaml
-
-from src.utils      import setup_logger, get_device, CheckpointManager
-from src.data       import run_preprocessing, SmellDataset
-from src.models     import SmellDetectionAgent
-from src.training   import GCNPretrainer, DQNTrainer
-from src.evaluation import ExperimentRunner
 
 # ──────────────────────────── Config ───────────────────────────────────────
 
@@ -31,13 +24,15 @@ def load_config(path: str) -> dict:
 # ──────────────────────────── Stage implementations ────────────────────────
 
 def stage_preprocess(cfg: dict, log: logging.Logger) -> tuple:
+    from src.data import run_preprocessing
     log.info("══════════════ STAGE: preprocess ══════════════")
     train_ds, val_ds, test_ds = run_preprocessing(cfg)
     log.info("Preprocessing complete.")
     return train_ds, val_ds, test_ds
 
 
-def stage_pretrain(cfg: dict, train_ds, val_ds, device: torch.device, log: logging.Logger):
+def stage_pretrain(cfg: dict, train_ds, val_ds, device, log: logging.Logger):
+    from src.training import GCNPretrainer
     log.info("══════════════ STAGE: GCN/RGAT pre-training (warm-start) ══════════════")
     pretrainer = GCNPretrainer(cfg, device)
     enc = pretrainer.train(train_ds, val_ds)
@@ -45,7 +40,10 @@ def stage_pretrain(cfg: dict, train_ds, val_ds, device: torch.device, log: loggi
     return enc
 
 
-def stage_train(cfg: dict, train_ds, val_ds, device: torch.device, log: logging.Logger) -> tuple:
+def stage_train(cfg: dict, train_ds, val_ds, device, log: logging.Logger) -> tuple:
+    from src.models import SmellDetectionAgent
+    from src.training import DQNTrainer
+    from src.utils import CheckpointManager
     log.info("══════════════ STAGE: RL DQN training (PRIMARY) ══════════════")
     feature_dim = train_ds[0]["x"].shape[1] if len(train_ds) > 0 else 783
     log.info(f"Detected node feature dimension: {feature_dim}")
@@ -76,10 +74,11 @@ def stage_experiment(
     agent,
     train_ds,
     test_ds,
-    device:     torch.device,
+    device,
     log:        logging.Logger,
     training_histories: dict = None,
 ):
+    from src.evaluation import ExperimentRunner
     log.info("══════════════ STAGE: run experiments ══════════════")
     runner  = ExperimentRunner(agent, train_ds, test_ds, cfg, device)
     results = runner.run_all(training_histories)
@@ -89,7 +88,7 @@ def stage_experiment(
 
 # ──────────────────────────── Full pipeline ────────────────────────────────
 
-def run_all(cfg: dict, device: torch.device, log: logging.Logger):
+def run_all(cfg: dict, device, log: logging.Logger):
     """Runs all stages in order."""
     # 1. Preprocess
     train_ds, val_ds, test_ds = stage_preprocess(cfg, log)
@@ -109,6 +108,10 @@ def run_all(cfg: dict, device: torch.device, log: logging.Logger):
 
 def main():
     cfg = load_config("config.yaml")
+    
+    from src.utils import setup_logger, get_device, CheckpointManager
+    from src.models import SmellDetectionAgent
+    
     log = setup_logger(cfg["paths"]["log_dir"], "SmellRL")
     
     parser = argparse.ArgumentParser(description="SmellRL v3 entrypoint")

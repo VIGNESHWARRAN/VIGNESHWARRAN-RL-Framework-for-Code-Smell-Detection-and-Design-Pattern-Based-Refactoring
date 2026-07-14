@@ -1,0 +1,5 @@
+Run Name,Description,Val Macro F1,Test Macro F1,Test Accuracy,Test Precision,Test Recall
+full_rgat,Proposed (RL 2-Step + RGAT + Halstead + Semantic),0.5083,0.5079,0.7675,0.5336,0.5541
+no_semantic,Semantic Ablation (RL 2-Step + RGAT + Halstead only),0.4862,0.4863,0.739,0.5152,0.5539
+metrics_only,Graph Ablation (RL 2-Step + Flat Halstead metrics only),0.5039,0.489,0.7385,0.5001,0.5652
+supervised_only,"Paradigm Ablation (RGAT + Semantic, No RL)",0.6596,0.6833,0.8125,0.6693,0.7035

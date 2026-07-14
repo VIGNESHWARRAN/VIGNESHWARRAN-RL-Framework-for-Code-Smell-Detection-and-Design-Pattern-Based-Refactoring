@@ -1,4 +1,5 @@
 # Semantic-Aware SmellRL v3 — Complete Technical Reference
+
 ## Resource-Optimized Edition
 
 **SmellRL v3** is a reinforcement learning system that combines **Relational Graph Attention Networks (R-GAT)**, **GraphCodeBERT semantic embeddings**, and a **genuine 2-step Deep Q-Network (γ=0.9)** to recommend software refactoring design patterns on Java source code from the **SmellyCode++** benchmark.
@@ -574,6 +575,7 @@ SmellRL/
 ## 18. Reproducibility & Execution Order
 
 ### Reproducibility Settings
+
 - `random_seed=42` for all stratified splits.
 - Wilcoxon signed-rank test (paired, non-parametric) p-values reported for final comparative results.
 
