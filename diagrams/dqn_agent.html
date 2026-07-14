@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmellRL v3 - Pipeline Overview</title>
+    <title>SmellRL v3 - DQN Agent</title>
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
         mermaid.initialize({ 
@@ -14,10 +14,8 @@
                 primaryColor: '#ffffff',
                 primaryTextColor: '#111827',
                 primaryBorderColor: '#374151',
-                lineColor: '#4b5563',
-                tertiaryColor: '#f3f4f6'
-            },
-            flowchart: { curve: 'basis' }
+                lineColor: '#4b5563'
+            }
         });
     </script>
     <style>
@@ -32,28 +30,23 @@
 </head>
 <body>
     <div class="diagram-card">
-        <div class="title">Figure 1: SmellRL v3 End-to-End Pipeline</div>
+        <div class="title">Figure 4: DQN Agent Architecture</div>
         <div class="mermaid">
             flowchart TD
-                %% Theme and styling
-                classDef data fill:#e3f2fd,stroke:#64b5f6,stroke-width:2px,color:#0d47a1,font-family:Arial;
-                classDef stage fill:#f1f8e9,stroke:#aed581,stroke-width:2px,color:#33691e,font-family:Arial;
-                classDef primary fill:#fff3e0,stroke:#ffb74d,stroke-width:2px,color:#e65100,font-family:Arial;
-                classDef eval fill:#f3e5f5,stroke:#ba68c8,stroke-width:2px,color:#4a148c,font-family:Arial;
+                classDef input fill:#e0f7fa,stroke:#4dd0e1,stroke-width:2px,color:#006064,font-family:Arial;
+                classDef layer fill:#f3e5f5,stroke:#ba68c8,stroke-width:2px,color:#4a148c,font-family:Arial;
+                classDef output fill:#fbe9e7,stroke:#ff8a65,stroke-width:2px,color:#bf360c,font-family:Arial;
 
-                Data(["<div style='padding: 10px; font-size: 1.1em;'><b>SmellyCode++ CSV</b><br/><span style='font-size: 0.9em; color: #333;'>107,554 rows</span></div>"]):::data
-                
-                S0["<div style='text-align: left; padding: 12px; line-height: 1.4;'><b style='font-size:1.1em;'>[Stage 0] Data Loading & Preprocessing</b><br/>• Multi-label → dominant smell<br/>• Halstead metrics parsed<br/>• NoSmell downsampled (3× max) & subsampled</div>"]:::stage
-                S1["<div style='text-align: left; padding: 12px; line-height: 1.4;'><b style='font-size:1.1em;'>[Stage 1] AST Graph Construction</b><br/>• Parse via javalang<br/>• Nodes: Class/method/field<br/>• Edges: CONTAINS, CALLS, ACCESSES_FIELD</div>"]:::stage
-                S2["<div style='text-align: left; padding: 12px; line-height: 1.4;'><b style='font-size:1.1em;'>[Stage 2] NodeFeatureFusion</b><br/>• 15-dim structural + 768-dim semantic<br/>• Bottleneck: 104 struct : 24 semantic<br/>• 18.75% semantic cap</div>"]:::stage
-                S3["<div style='text-align: left; padding: 12px; line-height: 1.4;'><b style='font-size:1.1em;'>[Stage 3] GCN Pre-training (warm-start)</b><br/>• RGATEncoder + linear head<br/>• Cross-entropy · 40 epochs<br/>• Encoder weights loaded into DQN</div>"]:::stage
-                S4["<div style='text-align: left; padding: 12px; line-height: 1.4;'><b style='font-size:1.1em;'>[Stage 4] 2-Step RL Training (PRIMARY)</b><br/>• <b>Step 1:</b> Observe graph → Refactoring action<br/>• <b>Transition:</b> apply_simulated_refactoring()<br/>• <b>Step 2:</b> Observe new state → Refine decision<br/>• DQN with γ=0.9, 30 episodes</div>"]:::primary
-                S5["<div style='text-align: left; padding: 12px; line-height: 1.4;'><b style='font-size:1.1em;'>[Stage 5] Evaluation</b><br/>• Pattern Macro F1, Per-pattern F1<br/>• Mean Halstead delta<br/>• Baselines: Random, Rule-Based, SVM</div>"]:::eval
+                In(["<div style='padding: 10px; line-height: 1.4;'><b>Graph Embedding</b><br/>1 x 128</div>"]):::input
+                L1["<div style='padding: 10px; line-height: 1.4;'><b>Linear Layer 1</b><br/>128 → 256<br/>ReLU + Dropout(0.2)</div>"]:::layer
+                L2["<div style='padding: 10px; line-height: 1.4;'><b>Linear Layer 2</b><br/>256 → 128<br/>ReLU + Dropout(0.2)</div>"]:::layer
+                L3["<div style='padding: 10px; line-height: 1.4;'><b>Linear Layer 3</b><br/>128 → 64<br/>ReLU + Dropout(0.2)</div>"]:::layer
+                Out(["<div style='padding: 10px; line-height: 1.4;'><b>Raw Q-Values</b><br/>1 x 6 (Refactoring Actions)</div>"]):::output
 
-                Data --> S0 --> S1 --> S2 --> S3 --> S4 --> S5
+                In --> L1 --> L2 --> L3 --> Out
         </div>
         <div class="controls">
-            <button class="btn" onclick="downloadSVG('pipeline-diagram')">
+            <button class="btn" onclick="downloadSVG('dqn-agent-diagram')">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                 Download SVG
             </button>

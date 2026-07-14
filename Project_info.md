@@ -1,270 +1,283 @@
-# Semantic-Aware SmellRL: Full Project Documentation
+# Semantic-Aware SmellRL v3 — Complete Technical Reference
+## Resource-Optimized Edition
 
-**SmellRL** is a hybrid machine-learning pipeline that combines **Graph Convolutional Networks (GCN)**, **Pre-trained Code Language Models (GraphCodeBERT)**, and **Deep Reinforcement Learning (DQN)** to detect structural and semantic code smells in Java source code.
+**SmellRL v3** is a reinforcement learning system that combines **Relational Graph Attention Networks (R-GAT)**, **GraphCodeBERT semantic embeddings**, and a **genuine 2-step Deep Q-Network (γ=0.9)** to recommend software refactoring design patterns on Java source code from the **SmellyCode++** benchmark.
 
-This document is a complete, self-contained technical reference — covering dataset handling, feature engineering, model architecture, training procedures, reward design, evaluation, ablation studies, and all hyperparameters with their justifications.
+This document is the single source of truth for all architectural decisions, dataset choices, training procedures, reward design, ablation methodology, and hyperparameters — with explicit justifications for every decision.
+
+**Dataset:** SmellyCode++ (Nature Scientific Data, 2025) — 107,554 Java samples, 103 open-source projects  
+**Primary Claim:** Semantic embeddings (GraphCodeBERT) + structural graph reasoning (R-GAT) + 2-step RL outperforms structure-only and non-RL baselines on minority-class Macro F1.
 
 ---
 
 ## Table of Contents
 
-1. [Problem Statement](#1-problem-statement)
-2. [Dataset: MLCQ](#2-dataset-mlcq)
+1. [Problem Statement & Contributions](#1-problem-statement--contributions)
+2. [Dataset: SmellyCode++](#2-dataset-smellycode)
 3. [Pipeline Overview](#3-pipeline-overview)
 4. [Stage 0 — Data Loading & Preprocessing](#4-stage-0--data-loading--preprocessing)
-5. [Stage 1 — AST Graph Construction & Feature Engineering](#5-stage-1--ast-graph-construction--feature-engineering)
-6. [Stage 2 — NodeFeatureFusion (Structural Priority)](#6-stage-2--nodefeaturefusion-structural-priority)
+5. [Stage 1 — AST Graph Construction](#5-stage-1--ast-graph-construction)
+6. [Stage 2 — NodeFeatureFusion (18.75% Semantic Bottleneck)](#6-stage-2--nodefeaturefusion-1875-semantic-bottleneck)
 7. [Stage 3 — Semantic Embeddings: GraphCodeBERT](#7-stage-3--semantic-embeddings-graphcodebert)
-8. [Stage 4 — GCN Encoder Architecture](#8-stage-4--gcn-encoder-architecture)
-9. [Stage 5 — DQN Agent Architecture](#9-stage-5--dqn-agent-architecture)
-10. [Stage 6 — RL Training Loop](#10-stage-6--rl-training-loop)
-11. [Stage 7 — Evaluation & Baselines](#11-stage-7--evaluation--baselines)
-12. [Complete Hyperparameter Table](#12-complete-hyperparameter-table)
-13. [Ablation Studies](#13-ablation-studies)
-14. [Experimental Results](#14-experimental-results)
-15. [Architecture Justification & Design Decisions](#15-architecture-justification--design-decisions)
+8. [Stage 4 — R-GAT Encoder Architecture](#8-stage-4--r-gat-encoder-architecture)
+9. [Stage 5 — RL Environment & State Transitions](#9-stage-5--rl-environment--state-transitions)
+10. [Stage 6 — DQN Agent Architecture](#10-stage-6--dqn-agent-architecture)
+11. [Stage 7 — 2-Step RL Training Loop](#11-stage-7--2-step-rl-training-loop)
+12. [Stage 8 — Evaluation & Baselines](#12-stage-8--evaluation--baselines)
+13. [Ablation Studies (Core Experimental Design)](#13-ablation-studies-core-experimental-design)
+14. [Complete Hyperparameter Table](#14-complete-hyperparameter-table)
+15. [Design Principles](#15-design-principles)
 16. [Repository Structure](#16-repository-structure)
 17. [Dependencies](#17-dependencies)
-18. [Reproducibility & Resumability](#18-reproducibility--resumability)
+18. [Reproducibility & Execution Order](#18-reproducibility--execution-order)
 
 ---
 
-## 1. Problem Statement
+## 1. Problem Statement & Contributions
 
-Traditional static code smell detectors (e.g., Designite, PMD) apply hand-coded threshold rules over structural software metrics (CK metrics: WMC, CBO, RFC, LOC, DIT). This approach has two fundamental limitations:
+### Problem
 
-1. **No semantic understanding.** Rules based on `WMC > 47` or `LOC > 1000` cannot distinguish a genuinely complex algorithm from a poorly factored class.
-2. **No learning.** Static thresholds cannot adapt to the distribution of smells in a specific codebase or team's style.
+Traditional code smell detectors (Designite, PMD) apply hand-coded metric thresholds. They lack semantic understanding of code intent, produce binary smell/no-smell outputs, and do not recommend what to do about a smell. Machine learning classifiers improve detection but still cannot model the fact that multiple refactoring patterns may be valid for a given smell, with varying degrees of optimality.
 
-SmellRL addresses both limitations by:
-- Replacing the metric-only representation with a **heterogeneous AST graph** where every node carries both structural and semantic features from a pre-trained code language model.
-- Replacing static threshold rules with a **DQN agent** that learns a classification policy from interaction with labeled examples, guided by an asymmetric reward that encodes domain knowledge about the relative cost of different mistake types.
+### What SmellRL v3 Does
 
-The target smell taxonomy and their indices are:
+- Formulates refactoring recommendation as a **genuine 2-step Markov Decision Process** (γ=0.9), where the agent observes a smelly code graph, selects a refactoring pattern, and then observes the post-refactoring code state to make a refinement decision.
+- Fuses **Halstead/complexity structural metrics** with **GraphCodeBERT semantic embeddings** using a controlled 18.75% semantic bottleneck that prevents high-dimensional embeddings from drowning structural signals.
+- Uses **SmellyCode++** (107,554 samples, Nature Scientific Data 2025) — a significantly larger and cleaner dataset than prior work on MLCQ.
 
-| Index | Smell Class   | Description |
-|-------|--------------|-------------|
-| 0     | `GodClass`   | A class that has taken on too many responsibilities (Blob Anti-Pattern). High WMC, high LOC. |
-| 1     | `FeatureEnvy` | A method more interested in data from another class than its own. High external object access. |
-| 2     | `LongMethod`  | A method with too many statements, high cyclomatic complexity. |
-| 3     | `DataClass`   | A class with many fields but few real methods (anemic domain model). High NOC, low WMC. |
-| 4     | `NoSmell`     | Clean, healthy code with no significant structural smells. |
+### Refactoring Action Space
 
-Smell-to-refactoring-pattern mapping:
+| Index | Pattern | Primary Target | Citation |
+|---|---|---|---|
+| 0 | `Strategy` | FeatureEnvy | Fowler (1999) §7 |
+| 1 | `Observer` | DataClass | Fowler (1999) §11 |
+| 2 | `Facade` | GodClass | Fowler (1999) §12 |
+| 3 | `Mediator` | GodClass (coupling) | Brown et al. (1998) §3 |
+| 4 | `ExtractClass` | LongMethod / GodClass | Fowler (1999) §6 |
+| 5 | `NoRefactor` | NoSmell | — |
 
-| Smell       | Valid Refactoring Patterns |
-|-------------|--------------------------|
-| GodClass    | Facade (2), Mediator (3) |
-| FeatureEnvy | Strategy (0), ExtractClass (4) |
-| LongMethod  | ExtractClass (4), None (5) |
-| DataClass   | Observer (1), None (5) |
-| NoSmell     | None (5) |
+### Contributions
+
+1. **Genuine 2-step RL MDP (γ=0.9):** Unlike γ=0 contextual bandits (equivalent to weighted classifiers), the agent learns temporal credit assignment across a simulated post-refactoring state transition.
+2. **Halstead + GraphCodeBERT fusion with controlled bottleneck:** 18.75% semantic cap prevents dimensionality flooding while preserving semantic discriminability.
+3. **SmellyCode++ at scale:** First application of the 107K-sample SmellyCode++ benchmark to RL-based refactoring recommendation; enables statistically significant multi-seed evaluation.
+4. **Semantic ablation as core claim:** Controlled ablation (`Full` vs `NoSemantic` vs `MetricsOnly`) using identical RL training code with zeroed semantic dims — making the semantic contribution empirically verifiable.
 
 ---
 
-## 2. Dataset: MLCQ
+## 2. Dataset: SmellyCode++
 
-**MLCQ (Machine Learning Code Quality)** is a benchmark dataset of labeled Java classes and methods, curated with human expert review. Each row is a (class/method, smell_type, severity) triple.
+**DOI:** `10.6084/m9.figshare.28519385.v1`  
+**Published:** Nature Scientific Data, July 2025  
+**Size:** 107,554 Java samples from 103 open-source projects  
 
-- **Source:** CSV file at `data/mlcq/mlcq.csv`
-- **Severity labels:** `none`, `minor`, `major`, `critical`. Rows where severity is `"none"` are re-labeled `NoSmell`.
-- **Supported smell aliases:** The loader normalises variants: `"godclass"`, `"blob"`, `"god_class"` -> `GodClass`; `"featureenvy"`, `"feature_envy"` -> `FeatureEnvy`; etc.
-- **Required columns:** A smell type column (auto-detected from: `smell`, `smell_type`, `kind`, `codesmell`, `type`, `smelltype`) plus a `source_code` column with raw Java source.
+### Why SmellyCode++ Over MLCQ
 
-### Class Balancing
+| Property | MLCQ | SmellyCode++ |
+|---|---|---|
+| Size | ~11K usable rows | 107,554 rows |
+| Sources | Mixed, single study | 103 open-source Java projects |
+| Label quality | Low inter-rater κ for minor severity | Nature peer-reviewed methodology |
+| Metrics | CK (WMC, DIT, CBO, RFC, LOC) | 14 Halstead + complexity metrics |
+| Multi-label | No | Yes (4 binary columns) |
+| Code included | Via separate download | Inline `Code` column |
 
-1. **AST validation:** Using `javalang` via `ProcessPoolExecutor` with `N_CPU - 1` workers, every row's source code is verified to be parseable. Rows that fail are discarded and the validated subset is cached as `<csv>_parseable.csv`.
-2. **NoSmell downsampling:** `NoSmell` instances are downsampled to `nosmell_ratio x max_smell_class_count` (default 3.0) to prevent majority-class bias while retaining enough clean-code examples.
+### Schema
+
+| Column | Type | Description |
+|---|---|---|
+| `Code` | string | Preprocessed Java source (comments stripped) |
+| `GodClass` | 0/1 | Binary smell label |
+| `FeatureEnvy` | 0/1 | Binary smell label |
+| `LongMethod` | 0/1 | Binary smell label |
+| `DataClass` | 0/1 | Binary smell label |
+| `lloc` | float | Logical lines of code |
+| `cyclomatic` | float | Cyclomatic complexity |
+| `n1` | float | Distinct operators (Halstead η₁) |
+| `n2` | float | Distinct operands (Halstead η₂) |
+| `N1` | float | Total operators |
+| `N2` | float | Total operands |
+| `N` | float | Halstead program length |
+| `Nhat` | float | Estimated program length |
+| `V` | float | Halstead Volume |
+| `D` | float | Halstead Difficulty |
+| `E` | float | Halstead Effort |
+| `T` | float | Halstead Time |
+| `B` | float | Halstead Bugs estimate |
+
+### Multi-Label to Single Dominant Label
+
+SmellyCode++ is multi-label (a class can have GodClass=1 AND DataClass=1). We convert to a single dominant label using priority order:
+
+```
+GodClass > FeatureEnvy > LongMethod > DataClass > NoSmell
+```
+
+The full multi-label binary vector is stored as `co_smell_mask` per graph item for reward bonus computation (co-occurring smells receive partial positive reward for adjacent patterns).
+
+### Class Distribution & Balancing
+
+`NoSmell` instances are downsampled to `3.0 × max_smell_class_count` to prevent majority-class bias. Distribution is logged before and after downsampling at INFO level.
+
+### Resource-Optimized Sub-sampling
+To achieve high computational efficiency on commodity hardware (e.g., NVIDIA RTX 3050) without degrading representation robustness:
+- **`max_train_samples`**: Cap training set at **5,000 graphs** (stratified).
+- **`max_val_samples`**: Cap validation set at **2,000 graphs** (stratified).
+- **`max_test_samples`**: Cap test set at **2,000 graphs** (stratified).
+
+Evaluation on 2,000 held-out graphs guarantees a high level of statistical confidence for reported Macro F1 metrics.
 
 ### Train / Validation / Test Split
 
-Stratified splits via `sklearn.model_selection.train_test_split`:
+Stratified by `smell_idx` using `sklearn.model_selection.train_test_split`:
 
-| Split | Ratio | Note |
-|-------|-------|------|
-| Train | 70%   | GCN pre-training and DQN RL training |
-| Val   | 15%   | GCN validation and Phase 1 winner selection |
-| Test  | 15%   | Held-out for all final evaluations |
-
-`random_seed=42` is used throughout.
+| Split | Ratio |
+|---|---|
+| Train | 70% (capped at 5,000) |
+| Val | 15% (capped at 2,000) |
+| Test | 15% (capped at 2,000) |
 
 ---
 
 ## 3. Pipeline Overview
 
-```
-Raw MLCQ CSV
-     |
-     v
-[Stage 0] Data Loading & Class Balancing
-     |  load_mlcq() -> parsed + balanced DataFrame
-     |
-     v
-[Stage 1] AST Graph Construction  (src/data.py)
-     |  _build_ast_graph() -> {x: [N, 783], edge_index: [2, E], y: int}
-     |  SmellDataset: serialised to data/processed/{train,val,test}.pt
-     |
-     v
-[Stage 2] NodeFeatureFusion  (src/models.py - inside GCNEncoder)
-     |  struct[N, 15] -> MLP -> [N, 96]   (75% capacity)
-     |  sem[N, 768]   -> Linear -> [N, 32] (25% capacity)
-     |  fused: cat([struct_96, sem_32]) = [N, 128]
-     |
-     v
-[Stage 3] GCN Pre-training  (src/training.py -> GCNPretrainer)
-     |  GCN + LinearHead trained w/ cross-entropy for 50 epochs
-     |  checkpoints/gcn_pretrain_latest.pt
-     |
-     v
-[Stage 4] DQN RL Training  (src/training.py -> DQNTrainer)
-     |  Agent observes 128-dim state, takes action in {0..4}
-     |  receives asymmetric reward, stores in ReplayBuffer(50k)
-     |  checkpoints/smellrl_latest.pt
-     |
-     v
-[Stage 5] Evaluation  (src/evaluation.py -> ExperimentRunner)
-         SmellRL vs. Random / Rule-Based / SVM
-         data/results/{baseline_comparison,exp5_per_class_f1}.csv
+```mermaid
+flowchart TD
+    %% Theme and styling
+    classDef data fill:#e3f2fd,stroke:#64b5f6,stroke-width:2px,color:#0d47a1,font-family:Arial;
+    classDef stage fill:#f1f8e9,stroke:#aed581,stroke-width:2px,color:#33691e,font-family:Arial;
+    classDef primary fill:#fff3e0,stroke:#ffb74d,stroke-width:2px,color:#e65100,font-family:Arial;
+    classDef eval fill:#f3e5f5,stroke:#ba68c8,stroke-width:2px,color:#4a148c,font-family:Arial;
+
+    Data([SmellyCode++ CSV<br/>107,554 rows]) ::: data
+    
+    S0["<b>[Stage 0] Data Loading & Preprocessing</b><br/>• Multi-label → dominant smell<br/>• Halstead metrics parsed<br/>• NoSmell downsampled (3× max) & subsampled"] ::: stage
+    S1["<b>[Stage 1] AST Graph Construction</b><br/>• Parse via javalang<br/>• Nodes: Class/method/field<br/>• Edges: CONTAINS, CALLS, ACCESSES_FIELD"] ::: stage
+    S2["<b>[Stage 2] NodeFeatureFusion</b><br/>• 15-dim structural + 768-dim semantic<br/>• Bottleneck: 104 struct : 24 semantic<br/>• 18.75% semantic cap"] ::: stage
+    S3["<b>[Stage 3] GCN Pre-training (warm-start)</b><br/>• RGATEncoder + linear head<br/>• Cross-entropy · 40 epochs<br/>• Encoder weights loaded into DQN"] ::: stage
+    S4["<b>[Stage 4] 2-Step RL Training (PRIMARY)</b><br/>• <b>Step 1:</b> Observe graph → Refactoring action<br/>• <b>Transition:</b> apply_simulated_refactoring()<br/>• <b>Step 2:</b> Observe new state → Refine decision<br/>• DQN with γ=0.9, 30 episodes"] ::: primary
+    S5["<b>[Stage 5] Evaluation</b><br/>• Pattern Macro F1, Per-pattern F1<br/>• Mean Halstead delta<br/>• Baselines: Random, Rule-Based, SVM"] ::: eval
+
+    Data --> S0 --> S1 --> S2 --> S3 --> S4 --> S5
 ```
 
 ---
 
 ## 4. Stage 0 — Data Loading & Preprocessing
 
-**File:** `src/data.py` — `load_mlcq()`
+**File:** `src/data.py` — `load_smellycode()`
 
-### AST Parse Verification
+### Fail-Loud Validation (No Fallbacks)
 
 ```python
-with ProcessPoolExecutor(max_workers=N_CPU-1) as executor:
-    results = list(executor.map(check_single_code, codes, chunksize=100))
+REQUIRED_COLS = {"Code", "GodClass", "FeatureEnvy", "LongMethod", "DataClass",
+                 "lloc", "cyclomatic", "V", "D", "E", "B"}
+missing = REQUIRED_COLS - set(df.columns)
+if missing:
+    raise ValueError(f"SmellyCode++ CSV missing columns: {missing}")
 ```
 
-Rows failing `javalang.parse.parse()` are dropped. The validated subset is cached to `<csv>_parseable.csv` — subsequent runs skip the expensive multiprocessing step.
+If any required column is absent, the pipeline crashes immediately with a descriptive error. There is no zero-padding, no default-value fallback, no silent column skip.
 
-**Why fail-fast, no fallbacks:** A row with unparseable source would silently produce a corrupt graph with zero-valued node features, poisoning the training distribution. Discarding and caching ensures every graph in the dataset corresponds to a genuine, parseable Java class.
+### Halstead Normalization Bounds
+
+| Metric Slot | Source Column | Normalization Max | Derivation |
+|---|---|---|---|
+| idx 3 | `cyclomatic` | 50.0 | 99th percentile of SmellyCode++ train set |
+| idx 4 | `lloc` | 5000.0 | 99th percentile of SmellyCode++ train set |
+| idx 5 | `V` (Volume) | 5000.0 | 99th percentile |
+| idx 6 | `D` (Difficulty) | 100.0 | 99th percentile |
+| idx 7 | `E` (Effort) | 1,000,000.0 | 99th percentile |
+| idx 8 | `B` (Bugs) | 5.0 | 99th percentile |
+
+### Graph Item Dict (Per Sample)
+
+```python
+{
+  "x":             Tensor [N, 783],   # N nodes, 783-dim features
+  "edge_index":    Tensor [2, E],     # edge connectivity
+  "edge_type":     Tensor [E],        # 0=CONTAINS, 1=CALLS, 2=ACCESSES_FIELD
+  "y":             Tensor [],         # dominant smell index (0-4)
+  "co_smell_mask": Tensor [4],       # binary [GodClass, FeatureEnvy, LongMethod, DataClass]
+  "halstead":      Tensor [6],       # raw unnormalized Halstead scalars for reward computation
+  "idx":           int,
+}
+```
+
+#### Concrete Example Trace
+
+```yaml
+y: 4                                            # Dominant Smell Index (4 = NoSmell)
+co_smell_mask: [0.0, 0.0, 0.0, 0.0]             # Multi-label smells [GodClass, FeatureEnvy, LongMethod, DataClass]
+halstead: [1.0, 1.0, 6.34, 0.0, 0.0, 0.002]     # Unnormalized Halstead Metrics: [CC, LLOC, Volume, Difficulty, Effort, Bugs]
+x shape: torch.Size([3, 783])                   # 3 AST Nodes, each with 783 dimensions (15 structural + 768 semantic)
+
+x[0, :15] (class node structural features):     # Structural features of class node (features 0 to 14)
+  - Node Type (one-hot Class):  [1.0, 0.0, 0.0]
+  - Normalized Halstead:        [0.02, 0.0002, 0.0013, 0.0, 0.0, 0.0004] (e.g. 1.0/50.0 = 0.02)
+  - AST Data-usage:             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+edge_index shape: torch.Size([2, 4])            # 4 directional connections in the graph
+edge_type: [0, 0, 0, 0]                         # Relational edge types (all 4 are type 0 = CONTAINS)
+```
 
 ---
 
-## 5. Stage 1 — AST Graph Construction & Feature Engineering
+## 5. Stage 1 — AST Graph Construction
 
-**File:** `src/data.py` — `_build_ast_graph()` and `SmellDataset`
+**File:** `src/data.py` — `_build_ast_graph()`
 
-Each Java class is parsed into a **heterogeneous directed graph** with three node types:
+Parses the `Code` column using `javalang`. If parsing fails, raises immediately — no fallback single-node graph.
 
-| Node Type | Source | Index in Graph |
-|-----------|--------|---------------|
-| Class     | `tree.types[0]`    | Always index 0 |
-| Method    | `cls.methods[i]`   | Indices 1 to M |
-| Field     | `cls.fields[j]`    | Indices M+1 to M+F |
+### Node Types
 
-### Node Feature Vector (783 dims)
+| Node | One-hot (idx 0-2) | Features |
+|---|---|---|
+| Class | [1, 0, 0] | Full 6 Halstead + 6 data-usage metrics |
+| Method | [0, 1, 0] | Cyclomatic CC, estimated LOC from stmts |
+| Field | [0, 0, 1] | Zero CK/Halstead, field declaration embedding |
 
-Every node carries a **783-dimensional feature vector**:
+### Edge Types (Relational)
 
-#### Component 1: Node Type One-Hot (3 dims)
+| Code | Type | Semantics |
+|---|---|---|
+| 0 | `CONTAINS` | Class ↔ Method, Class ↔ Field (bidirectional) |
+| 1 | `CALLS` | Method → Method (intra-class invocation) |
+| 2 | `ACCESSES_FIELD` | Method → Field (read/write access) |
 
-```
-[1, 0, 0]  ->  Class node
-[0, 1, 0]  ->  Method node
-[0, 0, 1]  ->  Field node
-```
-
-#### Component 2: Structural / CK Metrics (6 dims, class node)
-
-| Feature | Max Value | Normalization |
-|---------|----------|--------------|
-| WMC     | 150.0    | clip(val, 0, 150) / 150 |
-| DIT     | 8.0      | clip(val, 0, 8) / 8 |
-| NOC     | 20.0     | clip(val, 0, 20) / 20 |
-| CBO     | 40.0     | clip(val, 0, 40) / 40 |
-| RFC     | 200.0    | clip(val, 0, 200) / 200 |
-| LOC     | 3000.0   | clip(val, 0, 3000) / 3000 |
-
-Method nodes: `[cc/20, 0, 0, 0, 0, mloc/200]`. Field nodes: all zeros in these slots.
-
-#### Component 3: Data-Usage Features (6 dims, class node)
-
-Computed by traversing method bodies with `javalang.tree.MethodInvocation` and `javalang.tree.MemberReference`:
-
-| Feature | Computation | Purpose |
-|---------|-------------|---------|
-| `n_field_accesses` | Refs to own fields / 50 | DataClass signal |
-| `n_method_calls` | All invocations / 100 | Complexity signal |
-| `n_external_objects` | Non-own refs / 50 | FeatureEnvy signal |
-| `field_access_ratio` | `n_field / (n_field + n_calls)` | Scale-invariant ratio |
-| `method_call_ratio` | `n_calls / (n_field + n_calls)` | Scale-invariant ratio |
-| `data_usage_density` | `(n_field + n_calls) / n_methods / 20` | Per-method activity |
-
-#### Component 4: GraphCodeBERT Semantic Embedding (768 dims)
-
-CLS-token embedding from `microsoft/graphcodebert-base`. Cached by MD5 hash of text to `data/processed/embeddings_cache/`.
-
-**Total node feature dimension:** 3 + 6 + 6 + 768 = **783 dims**
-
-### Edge Types
-
-| Edge Type | Definition |
-|-----------|-----------|
-| `CONTAINS` (structural) | Class <-> each Method; Class <-> each Field (bidirectional) |
-| `CALLS` (semantic) | Method A -> Method B if A's body calls B (same class) |
-| `ACCESSES_FIELD` (semantic) | Method A -> Field F if A's body references field F |
+R-GAT learns separate attention parameters per edge type — critical for distinguishing FeatureEnvy (many CALLS to external objects) from LongMethod (simply deep CONTAINS nesting).
 
 ---
 
-## 6. Stage 2 — NodeFeatureFusion (Structural Priority)
+## 6. Stage 2 — NodeFeatureFusion (18.75% Semantic Bottleneck)
 
 **File:** `src/models.py` — `NodeFeatureFusion`
 
-### The Dimensionality Dominance Problem
+Raw node vectors are 783-dim: 15 structural + 768 semantic. Without fusion, the GCN's first linear layer receives 98.1% semantic signal. NodeFeatureFusion corrects this:
 
-In the raw 783-dim node feature vector:
-- Semantic (GraphCodeBERT): **768 dims = 98.1%** of the vector
-- Structural (CK + data-usage + node-type): **15 dims = 1.9%** of the vector
+```mermaid
+flowchart LR
+    classDef input fill:#e0f7fa,stroke:#4dd0e1,stroke-width:2px,color:#006064,font-family:Arial;
+    classDef process fill:#fff8e1,stroke:#ffd54f,stroke-width:2px,color:#ff6f00,font-family:Arial;
+    classDef output fill:#e8f5e9,stroke:#81c784,stroke-width:2px,color:#1b5e20,font-family:Arial;
 
-Without correction, `GCNLayer`'s `nn.Linear(783, 128)` receives 98.1% semantic signal. Gradients for the 15 structural dimensions are proportionally negligible, effectively drowning out the hand-crafted CK and data-usage features.
+    S[Structural Features<br/>15 dimensions] ::: input
+    Sem[Semantic Features<br/>GraphCodeBERT CLS<br/>768 dimensions] ::: input
+    
+    MLP[2-layer MLP + LayerNorm<br/>15 → 48 → 104] ::: process
+    Lin[Linear + LayerNorm<br/>768 → 24] ::: process
+    
+    Cat((Concat)) ::: process
+    Out[Fused Node Vector<br/>128 dimensions<br/>18.75% Semantic] ::: output
 
-### Solution: Separate Projection + Late Fusion
-
-`NodeFeatureFusion` projects each group into a balanced space before the GCN ever sees the data:
-
-```
-Structural Branch  (15 -> 96):   MLP: Linear(15->48) -> ReLU -> Linear(48->96) -> LayerNorm
-Semantic Branch   (768 -> 32):   Linear(768->32) -> LayerNorm
-Output:            cat([struct_96, sem_32]) = 128 dims per node
-```
-
-| Branch | Input | Output | Capacity |
-|--------|-------|--------|----------|
-| Structural | 15 dims | 96 dims | **75%** (3x semantic) |
-| Semantic   | 768 dims | 32 dims | **25%** |
-| Fused      | — | 128 dims | Equal to GCN hidden_dim |
-
-```python
-# Class constants
-NodeFeatureFusion.STRUCT_DIM = 15   # 3 node-type + 6 CK + 6 data-usage
-NodeFeatureFusion.SEM_DIM    = 768  # GraphCodeBERT CLS embedding
-NodeFeatureFusion.STRUCT_OUT = 96   # 3x semantic -- structure gets priority
-NodeFeatureFusion.SEM_OUT    = 32   # compressed semantic
-NodeFeatureFusion.FUSED_DIM  = 128  # STRUCT_OUT + SEM_OUT
+    S --> MLP
+    Sem --> Lin
+    MLP -- 104 dims --> Cat
+    Lin -- 24 dims --> Cat
+    Cat --> Out
 ```
 
-**Why a 2-layer MLP for structure?** The 15 structural features have non-linear interactions (e.g., high WMC combined with high external object access = FeatureEnvy, not GodClass). A single linear would miss these combinations.
-
-**Why a single linear for semantic?** GraphCodeBERT's 768-dim space is already richly pre-trained — compression just needs to select the most relevant directions. A single linear projection is sufficient.
-
-**Error policy:** If input width < STRUCT_DIM + SEM_DIM, a `ValueError` is raised immediately. The fusion module does NOT silently zero-pad inputs — shape mismatches indicate a pipeline bug and must be caught explicitly.
-
-### Ablation Compatibility
-
-For `ablate_semantic` runs, `AblatedDataset.__getitem__` zeroes dims `[15:]` in-place (via `.clone()` to avoid cache mutation):
-
-```python
-item["x"] = item["x"].clone()
-item["x"][:, NodeFeatureFusion.STRUCT_DIM:] = 0.0
-```
-
-`sem_proj(zeros) ≈ bias-only -> near-zero semantic output`, cleanly disabling the semantic branch without any shape mismatch or silent wrong result.
+**Semantic weight = 24/128 = 18.75%** — capped at under 20% so structural complexity metrics remain the primary discriminating signal.
 
 ---
 
@@ -272,378 +285,281 @@ item["x"][:, NodeFeatureFusion.STRUCT_DIM:] = 0.0
 
 **File:** `src/embeddings.py` — `SemanticEmbedder`
 
-### Model
-
-`microsoft/graphcodebert-base` — a RoBERTa-based model pre-trained jointly on code and natural language with structural data flow as an auxiliary signal.
-
-### Embedding Strategy
-
-- **Input:** Raw text (class name, method body code, or field declaration)
-- **Tokenization:** HuggingFace AutoTokenizer, `max_length=512`, truncated
-- **Output:** `last_hidden_state[:, 0, :]` — the `[CLS]` token (shape `[768]`)
-- **Caching:** MD5(text) -> `{hash}.npy` in `data/processed/embeddings_cache/`
-
-### Ablation Toggle
-
-```python
-USE_EMBEDDINGS_MODEL = True  # src/embeddings.py
-```
-
-Setting to `False` routes to `SyntheticEmbedder` — deterministic 768-dim pseudo-embeddings via SHA-256 seeded numpy normals. Used only for explicit structural-only ablation experiments.
-
-**Error policy:** If `USE_EMBEDDINGS_MODEL=True` and `transformers` is not installed, `ImportError` propagates immediately. The system does **not** silently fall back to synthetic embeddings — a missing dependency must be resolved explicitly, not papered over.
+Uses `microsoft/graphcodebert-base`. Embeddings are cached to `data/processed/embeddings_cache/<md5>.npy`. If `transformers` is not installed, raises `ImportError` immediately — no synthetic fallback.
 
 ---
 
-## 8. Stage 4 — GCN Encoder Architecture
+## 8. Stage 4 — R-GAT Encoder Architecture
 
-**File:** `src/models.py` — `GCNEncoder`
+**File:** `src/models.py` — `RGATEncoder`
 
-The GCN encoder converts a variable-size attributed graph into a fixed-size **128-dimensional state vector**:
+Converts variable-sized attributed code graphs into a fixed-size **128-dimensional state vector**.
 
+```mermaid
+flowchart TD
+    classDef data fill:#e3f2fd,stroke:#64b5f6,stroke-width:2px,color:#0d47a1,font-family:Arial;
+    classDef layer fill:#f1f8e9,stroke:#aed581,stroke-width:2px,color:#33691e,font-family:Arial;
+    classDef op fill:#fff9c4,stroke:#fff176,stroke-width:2px,color:#f57f17,font-family:Arial;
+    classDef output fill:#fbe9e7,stroke:#ff8a65,stroke-width:2px,color:#bf360c,font-family:Arial;
+
+    In([Input Graph X<br/>N nodes x 783 dims]) ::: data
+    Fuse[NodeFeatureFusion<br/>Outputs x_fused N x 128] ::: layer
+    RGAT1["<b>RGATLayer 1 (128→128)</b><br/>Type-specific W_r + attention a_r<br/>LayerNorm(128)"] ::: layer
+    RGAT2["<b>RGATLayer 2 (128→128)</b><br/>Second relational message passing<br/>h2 = h2 + skip_proj(x_fused)<br/>LayerNorm(128)"] ::: layer
+    AttPool["<b>AttentionPooling</b><br/>w = sigmoid(Linear(h, 1)) / Σw<br/>z = Σ(w_i · h_i)"] ::: layer
+    Out([Graph State Vector<br/>1 x 128 dims]) ::: output
+
+    In --> Fuse
+    Fuse --> RGAT1
+    RGAT1 --> RGAT2
+    Fuse -.->|Skip Connection| RGAT2
+    RGAT2 --> AttPool
+    AttPool --> Out
 ```
-Input x  [N, 783]
-  |
-  +-- NodeFeatureFusion -> x_fused [N, 128]
-  |   (struct 15->96, sem 768->32)
-  |
-  +-- GCNLayer1(128->128): D^{-1/2} A_hat D^{-1/2} X W + self-loop + ReLU
-  |   LayerNorm(128) + Dropout(0.1)
-  |
-  +-- GCNLayer2(128->128): second round message passing
-  |   skip_proj(x_fused): Linear(128->128) residual connection
-  |   h2 = h2 + skip_proj(x_fused)
-  |   LayerNorm(128)
-  |
-  +-- AttentionPooling: w = sigmoid(Linear(h,1)) / sum(w)
-       z = sum(w_i * h_i)   [1, 128]
-```
-
-**GCNLayer** implements: `h = ReLU(W * (D^{-1/2} A_hat D^{-1/2} * X))` where `A_hat = A + I` (self-loops).
-
-**AttentionPooling** learns which nodes (class vs method vs field) contribute most to smell classification via soft attention weights.
-
-**Residual skip connection:** Input `x_fused` (post-fusion, 128 dims) is added to `conv2` output, preventing gradient vanishing and allowing raw structural features to bypass graph convolution if that is more informative.
-
-**GCN Pre-training:** Before RL, the GCN is supervised pre-trained with `CrossEntropyLoss` via a `Linear(128->5)` head for 50 epochs. Only the GCN weights are kept; the head is discarded. This gives the encoder a warm start in a meaningful embedding space before RL begins.
 
 ---
 
-## 9. Stage 5 — DQN Agent Architecture
+## 9. Stage 5 — RL Environment & State Transitions
+
+**File:** `src/environment.py`
+
+### State Transition Function
+
+After the agent selects a refactoring action, the environment simulates the post-refactoring code by perturbing the Halstead/complexity metric dims in the node feature tensor. This produces a genuinely different state `s'` for step 2.
+
+**Perturbation bounds (literature-grounded):**
+
+| Action | Metric Changed | Multiplier Range | Citation |
+|---|---|---|---|
+| `Facade` | cyclomatic, lloc | ×[0.60, 0.85], ×[0.70, 0.90] | Fowler (1999) §12 |
+| `Strategy` | D (Difficulty) | ×[0.70, 0.90] | Fowler (1999) §7 |
+| `ExtractClass` | cyclomatic, lloc | ×[0.55, 0.75], ×[0.55, 0.75] | Fowler (1999) §6 |
+| `Observer` | D (Difficulty) | ×[0.75, 0.90] | Fowler (1999) §11 |
+| `Mediator` | cyclomatic, D | ×[0.70, 0.90], ×[0.80, 0.95] | Brown (1998) §3 |
+| `NoRefactor` | — | no change | — |
+
+Unknown action → `ValueError` immediately (no fallback).
+
+### Soft Reward Matrix (Fowler-Grounded)
+
+| True Smell | Strategy | Observer | Facade | Mediator | ExtractClass | NoRefactor |
+|---|---|---|---|---|---|---|
+| **GodClass** | -1.0 | -0.5 | **+2.0** | **+1.0** | **+0.5** | -2.0 |
+| **FeatureEnvy** | **+2.0** | -1.0 | -1.0 | -0.5 | **+0.5** | -2.0 |
+| **LongMethod** | -1.0 | -1.0 | -0.5 | -1.0 | **+2.0** | -2.0 |
+| **DataClass** | -1.0 | **+2.0** | -0.5 | -0.5 | -1.0 | -2.0 |
+| **NoSmell** | -1.0 | -1.0 | -1.0 | -1.0 | -1.0 | **+2.0** |
+
+All base rewards multiplied by `class_weight[smell]`.
+
+### Quality Delta Reward (Step 2 Only)
+
+```
+reward_step2 = clip( Σ(halstead_before[3:9] - halstead_after[3:9]) × 2.0, -2.0, +2.0 )
+```
+
+---
+
+## 10. Stage 6 — DQN Agent Architecture
 
 **File:** `src/models.py` — `SmellDetectionAgent`
 
-### DQNClassifier (Q-network)
+```mermaid
+flowchart TD
+    classDef input fill:#e0f7fa,stroke:#4dd0e1,stroke-width:2px,color:#006064,font-family:Arial;
+    classDef layer fill:#f3e5f5,stroke:#ba68c8,stroke-width:2px,color:#4a148c,font-family:Arial;
+    classDef output fill:#fbe9e7,stroke:#ff8a65,stroke-width:2px,color:#bf360c,font-family:Arial;
 
+    In([Graph Embedding<br/>1 x 128]) ::: input
+    L1["<b>Linear Layer 1</b><br/>128 → 256<br/>ReLU + Dropout(0.2)"] ::: layer
+    L2["<b>Linear Layer 2</b><br/>256 → 128<br/>ReLU + Dropout(0.2)"] ::: layer
+    L3["<b>Linear Layer 3</b><br/>128 → 64<br/>ReLU + Dropout(0.2)"] ::: layer
+    Out([Raw Q-Values<br/>1 x 6 (Refactoring Actions)]) ::: output
+
+    In --> L1 --> L2 --> L3 --> Out
 ```
-Input: [1, 128]
-  -> Linear(128->256) -> ReLU -> Dropout(0.2)
-  -> Linear(256->128) -> ReLU -> Dropout(0.2)
-  -> Linear(128->64)  -> ReLU -> Dropout(0.2)
-  -> Linear(64->5)              [raw Q-values]
-```
-
-Hidden layer sizes: `[256, 128, 64]` (compressing bottleneck).
-
-### SmellDetectionAgent
-
-```python
-class SmellDetectionAgent(nn.Module):
-    gcn:      GCNEncoder        # state encoder (with NodeFeatureFusion)
-    q:        DQNClassifier     # online Q-network (gradients flow)
-    q_target: DQNClassifier     # target Q-network (frozen, periodically synced)
-```
-
-**Target Network:** Initialized as a copy of `q` with `requires_grad=False`. Synced with `q` every `target_update_freq=1000` global steps.
-
-**gamma=0 (Contextual Bandit):** Each code sample is i.i.d. — no temporal dependency. Setting `gamma=0` reduces Bellman to `Q*(s,a) = r(s,a)`, equivalent to a contextual bandit while keeping DQN machinery for future multi-step extensions.
 
 ---
 
-## 10. Stage 6 — RL Training Loop
+## 11. Stage 7 — 2-Step RL Training Loop
 
-**File:** `src/training.py` — `DQNTrainer`
+**File:** `src/training.py` — `DQNTrainer` (PRIMARY trainer)
 
-### Replay Buffer
+### Episode Structure
 
-Circular FIFO, capacity 50,000 transitions: `(state [1,128], action int, reward float)`. Warmup of 100 transitions before training begins. Mini-batch size: 128.
+```mermaid
+flowchart TD
+    classDef state fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px,color:#01579b,font-family:Arial;
+    classDef action fill:#fff3e0,stroke:#ff9800,stroke-width:2px,color:#e65100,font-family:Arial;
+    classDef env fill:#e8f5e9,stroke:#4caf50,stroke-width:2px,color:#1b5e20,font-family:Arial;
+    classDef reward fill:#fce4ec,stroke:#e91e63,stroke-width:2px,color:#880e4f,font-family:Arial;
 
-### Epsilon-Greedy Exploration
+    S1([State 1: Initial Code Graph<br/>s1 = encode(item)]) ::: state
+    A1{Action 1:<br/>Refactoring Pattern<br/>a1 = ε-greedy Q(s1)} ::: action
+    R1([Reward 1:<br/>Soft Reward + Class Weight]) ::: reward
+    
+    Env[Environment Transition:<br/>apply_simulated_refactoring(item, a1)] ::: env
+    
+    S2([State 2: Refactored Code Graph<br/>s2 = encode(item2)]) ::: state
+    A2{Action 2:<br/>Refinement / NoRefactor<br/>a2 = ε-greedy Q(s2, ε/2)} ::: action
+    R2([Reward 2:<br/>Quality Delta Reward]) ::: reward
+    
+    TD[TD Target:<br/>r1 + γ · max Q_target(s2)] ::: env
+    Replay[(Replay Buffer<br/>push transitions)] ::: env
 
+    S1 --> A1
+    A1 --> R1
+    A1 --> Env
+    Env --> S2
+    S2 --> A2
+    A2 --> R2
+    
+    R1 -.-> TD
+    S2 -.-> TD
+    
+    TD -.-> Replay
+    R2 -.-> Replay
 ```
-epsilon(t) = epsilon_end + (epsilon_start - epsilon_end) * max(0, 1 - t / epsilon_decay_steps)
-```
-
-Start=1.0, End=0.05, Decay=250,000 steps.
-
-### Reward Function (Asymmetric, Class-Weighted)
-
-| Outcome | Base Reward |
-|---------|------------|
-| Correct smell detected | +2.0 |
-| Correct NoSmell | +0.5 |
-| Wrong smell type | -1.0 |
-| False alarm (smell on clean code) | -0.5 |
-| **Missed smell (NoSmell on smelly)** | **-2.0** |
-
-Base reward multiplied by `weight[cls] = total_samples / (n_classes * count[cls])` — inverse class frequency. Rare smell classes yield proportionally larger rewards when correctly identified.
-
-**Asymmetry rationale:** In software quality contexts, missing a real smell (allowing technical debt to accumulate) is costlier than raising a false alarm. The `-2.0` penalty for missed smells reflects this domain knowledge.
-
-### Loss Function & Optimization
-
-```
-target = reward   (gamma=0, no bootstrap)
-loss   = SmoothL1Loss(Q(s, a), target)   # Huber loss
-```
-
-- **Optimizer:** Adam, `lr=0.0005`, `weight_decay=1e-5`
-- **LR Schedule:** `CosineAnnealingLR(T_max=max_episodes)` — smooth 0.0005->0 decay
-- **Gradient clipping:** `max_norm=1.0`
-- **Joint optimization:** GCN encoder and Q-network are optimized together — GCN is not frozen during RL
 
 ---
 
-## 11. Stage 7 — Evaluation & Baselines
+## 12. Stage 8 — Evaluation & Baselines
 
 **File:** `src/evaluation.py` — `ExperimentRunner`
 
-### Random Agent
+### Baselines
 
-Uniformly random smell class prediction. Performance floor.
+All baselines predict **smell class** → mapped to dominant refactoring pattern via `SMELL_TO_PATTERN_DOMINANT`.
 
-### Rule-Based Agent (Designite-like)
+| Baseline | Method |
+|---|---|
+| Random Agent | Uniformly random pattern (performance floor) |
+| Rule-Based | Halstead metric thresholds (cyclomatic>15 → LongMethod, etc.) |
+| SVM + Metrics | `SVC(kernel='rbf')` on 6 Halstead features, `StandardScaler` |
+| **SmellRL (Ours)** | **2-step DQN, γ=0.9, R-GAT + GraphCodeBERT + Halstead** |
 
-Hand-coded CK metric thresholds on raw node features:
+### Metrics Reported
 
-```python
-# reads from item["x"] - raw [N, 783] node feature tensor
-wmc = cf[3] * 150.0    # index 3 = WMC normalized
-cbo = cf[6] * 40.0     # index 6 = CBO normalized
-rfc = cf[7] * 200.0    # index 7 = RFC normalized
-loc = cf[8] * 3000.0   # index 8 = LOC normalized
-# Method/field counts from node-type one-hot flags (correct implementation):
-n_m = int(x[:, 1].sum().item())   # x[:, 1] = is_method flag
-n_f = int(x[:, 2].sum().item())   # x[:, 2] = is_field flag
-
-if wmc > 47 or loc > 1000:             -> GodClass
-if cbo > 10 and rfc > 50:              -> FeatureEnvy
-if (loc / n_m) > 100 or avg_cc > 8:   -> LongMethod
-if n_f > 8 and wmc < 10:              -> DataClass
-else:                                  -> NoSmell
-```
-
-Note: `n_m` and `n_f` are computed from the one-hot feature flags (`x[:, 1]` and `x[:, 2]`), not from `(N-1)//2` estimation.
-
-### SVM + CK Metrics
-
-`sklearn.svm.SVC(kernel='rbf', C=1.0)` on 6 CK metrics (indices 3-8 of class node features), standardized with `StandardScaler`. Learned metric-only baseline.
-
-### Metrics
-
-Macro Precision, Macro Recall, Macro F1 (primary), Accuracy, per-class F1, confusion matrix.
+- **Macro F1** (primary)
+- **Per-pattern F1**
+- **Accuracy**
+- **Mean cumulative reward** (Total reward accumulated on test set)
+- **Mean Halstead delta** (Mean improvement in complexity/coupling)
+- **Confusion matrix** (Saved as CSV in `data/results/`)
 
 ---
 
-## 12. Complete Hyperparameter Table
+## 13. Ablation Studies (Core Experimental Design)
+
+**File:** `scripts/run_ablations.py`
+
+This suite runs **4 specific core configurations** in sequence to validate the primary scientific claims of the paper (no hyperparameter sweeps).
+
+| Configuration | Description | Key Variable Checked |
+|---|---|---|
+| **1. `full_rgat`** | **Proposed Method** (DQN 2-Step + RGAT + Halstead + Semantic) | Complete pipeline validation |
+| **2. `no_semantic`** | **Semantic Ablation** (DQN 2-Step + RGAT + Halstead) | Verifies the impact of GraphCodeBERT semantics |
+| **3. `metrics_only`** | **Graph Ablation** (DQN 2-Step + Flat Halstead metrics only) | Verifies the value of R-GAT graph representations |
+| **4. `supervised_only`** | **Paradigm Ablation** (Pre-trained RGAT + Semantic, No RL) | Verifies the value of RL-based reward shaping |
+
+### Configuration Details
+
+1. **`full_rgat` (Proposed Model)**: 
+   Fuses the 15 structural metrics (Halstead size/complexity metrics, node-type one-hot, and AST data-usage ratios) with the 768-dimensional GraphCodeBERT CLS embeddings. The agent trains inside the genuine 2-step MDP ($\gamma = 0.9$) utilizing Fowler-grounded reward matrices.
+
+2. **`no_semantic` (Semantic Ablation)**:
+   Keeps the R-GAT graph convolution and the 15 structural metrics active, but **zeroes out the 768 semantic dimensions** of the node feature tensor (`x[:, 15:] = 0.0`). The network shapes and parameters are identical to the proposed model. This isolates the exact contribution of Code Language Model semantics.
+
+3. **`metrics_only` (Graph Ablation)**:
+   In this configuration, **all graph edges are disconnected** (`edge_index` is empty) and GNN message passing is bypassed. The model only receives the 15-dimensional flat metrics vector for the class node (representing cyclomatic complexity, lines of code, volume, difficulty, effort, and bugs). This isolates the value of modeling the codebase as a relational AST graph.
+
+4. **`supervised_only` (Paradigm Ablation / Normal ML)**:
+   Uses the complete RGAT + Semantic input representation, but bypasses the Reinforcement Learning fine-tuning stage. The predictions are generated by attaching a standard linear classifier head directly to the supervised pre-trained encoder weights. This isolates the value of temporal reward-shaping over standard supervised learning.
+
+---
+
+## 14. Complete Hyperparameter Table
 
 ### Dataset
 
 | Parameter | Value | Justification |
-|-----------|-------|---------------|
+|---|---|---|
+| `dataset_type` | `smellycode` | SmellyCode++ primary; MLCQ for cross-validation only |
+| `nosmell_ratio` | 3.0 | 3:1 NoSmell:max_smell prevents majority-class bias |
+| `multilabel_strategy` | `dominant` | Priority: GodClass > FeatureEnvy > LongMethod > DataClass |
 | `train_ratio` | 0.70 | Standard 70/15/15 |
-| `val_ratio` | 0.15 | Model selection |
-| `test_ratio` | 0.15 | Final evaluation |
-| `random_seed` | 42 | Reproducibility |
-| `nosmell_ratio` | 3.0 | 3:1 NoSmell:max_smell — prevents majority-class bias |
+| `random_seed` | 42 | Reproducibility across all splits |
+| `data_version` | `"v4"` | Outdates old cached PT files to apply size cap |
+| `max_train_samples`| `5000` | Caps training set size for fast run times |
+| `max_val_samples`  | `2000` | Caps validation set size for fast evaluation |
+| `max_test_samples` | `2000` | Caps test set size for fast evaluation |
 
 ### NodeFeatureFusion
 
 | Parameter | Value | Justification |
-|-----------|-------|---------------|
-| `STRUCT_DIM` | 15 | 3 node-type + 6 CK + 6 data-usage |
-| `SEM_DIM` | 768 | GraphCodeBERT output |
-| `STRUCT_OUT` | 96 | 3x semantic capacity (75% of fused dim) |
-| `SEM_OUT` | 32 | Compressed semantic (25% of fused dim) |
-| `FUSED_DIM` | 128 | Must equal GCN hidden_dim |
-| MLP layers (struct) | 15->48->96 | Non-linear feature interaction learning |
-| Linear (sem) | 768->32 | Single projection — semantics already pre-trained |
+|---|---|---|
+| `STRUCT_DIM` | 15 | 3 node-type + 6 Halstead + 6 data-usage |
+| `SEM_DIM` | 768 | GraphCodeBERT CLS output |
+| `STRUCT_OUT` | 104 | 81.25% structural capacity |
+| `SEM_OUT` | 24 | 18.75% semantic cap |
+| `FUSED_DIM` | 128 | Must equal `gcn.hidden_dim` |
 
-### Semantic Embeddings
+### R-GAT Encoder
 
 | Parameter | Value | Justification |
-|-----------|-------|---------------|
-| `model_name` | `microsoft/graphcodebert-base` | Pre-trained on code + graph structure |
-| `embedding_dim` | 768 | Fixed by GraphCodeBERT |
-| `max_length` | 512 | ~95% of method bodies fit within 512 BPE tokens |
-| `use_cache` | `true` | Embedding is expensive; reuse across runs |
-
-### GCN Encoder
-
-| Parameter | Value | Justification |
-|-----------|-------|---------------|
-| `hidden_dim` | 128 | Equals FUSED_DIM — no dimension change after fusion |
+|---|---|---|
+| `hidden_dim` | 128 | Equals FUSED_DIM |
 | `output_dim` | 128 | State vector size |
-| `num_layers` | 2 | 2-hop neighborhood; more layers risk over-smoothing |
-| `dropout` | 0.1 | Light regularization |
-| `use_attention_pool` | true | Learns node importance vs fixed mean/max |
-| `use_residual` | true | Skip connection from x_fused to conv2 output |
-| `use_layernorm` | true | Batch-size agnostic |
+| `num_edge_types` | 3 | CONTAINS, CALLS, ACCESSES_FIELD |
+| `num_heads` | 4 | Multi-head attention per edge type |
+| `dropout` | 0.1 | Light encoder regularization |
+| `use_attention_pool` | true | Learns node importance vs fixed mean |
+| `use_residual` | true | Skip connection from x_fused |
+| `use_layernorm` | true | Batch-size agnostic normalization |
 
 ### GCN Pre-training
 
 | Parameter | Value | Justification |
-|-----------|-------|---------------|
-| `epochs` | 50 | Val accuracy plateaus by epoch 40-50 |
-| `learning_rate` | 0.001 | 2x RL LR — dense supervised signal |
-| `batch_size` | 32 | Accumulated per-graph losses |
-| `checkpoint_freq` | 10 | Recovery within 10 epochs |
+|---|---|---|
+| `epochs` | **40** | Capped at 40 epochs for fast pre-training |
+| `learning_rate` | 0.001 | 2× RL LR — dense supervised signal |
+| `batch_size` | 32 | Per-graph loss accumulation |
+| `loss` | `cross_entropy` | Standard supervised pre-training |
 
-### DQN Agent
+### DQN Agent (2-Step RL)
 
 | Parameter | Value | Justification |
-|-----------|-------|---------------|
-| `hidden_layers` | `[256, 128, 64]` | Compressing bottleneck |
+|---|---|---|
+| `gamma` | **0.9** | Genuine 2-step MDP — **must not be 0** |
+| `hidden_layers` | [256, 128, 64] | Compressing bottleneck in Q-network |
 | `learning_rate` | 0.0005 | Half of pre-training LR |
-| `batch_size` | 128 | Large batch reduces gradient variance |
+| `batch_size` | 128 | Reduces gradient variance |
 | `weight_decay` | 1e-5 | L2 regularization |
-| `dqn_dropout` | 0.2 | Stronger regularization on Q-network |
-| `replay_buffer_size` | 50,000 | ~50 episodes; breaks temporal correlations |
+| `dqn_dropout` | 0.2 | Stronger Q-network regularization |
+| `replay_buffer_size` | 50,000 | Breaks temporal correlations |
 | `epsilon_start` | 1.0 | Full exploration at start |
 | `epsilon_end` | 0.05 | 5% residual exploration |
-| `epsilon_decay_steps` | 250,000 | Decays over ~125 episodes |
+| `epsilon_decay_steps` | **100,000** | Decays over first 20 episodes on capped train split |
 | `target_update_freq` | 1,000 | Balance stability vs staleness |
-| `max_episodes` | 200 | Sufficient for convergence on MLCQ |
-| `warmup_steps` | 100 | Minimum buffer fill before learning |
-| `gamma` | 0.0 | Single-step contextual bandit |
-
-### Reward Shaping
-
-| Outcome | Value | Justification |
-|---------|-------|---------------|
-| `correct_smell` | +2.0 | Primary objective |
-| `correct_nosmell` | +0.5 | Beneficial but less critical |
-| `incorrect_smell` | -1.0 | Wrong type; less bad than complete miss |
-| `false_alarm` | -0.5 | Low stakes compared to missed smells |
-| `missed_smell` | -2.0 | Highest cost — technical debt miss |
+| `max_episodes` | **30** | Capped at 30 episodes for fast convergence |
+| `warmup_steps` | 500 | Minimum buffer fill before learning |
+| `eval_freq` | **10** | Val evaluation every 10 episodes |
 
 ---
 
-## 13. Ablation Studies
+## 15. Design Principles
 
-**File:** `scripts/run_ablations.py`
+### No Fallbacks — Fail Loudly
 
-### Phase 1: Hyperparameter Sweep
+Every failure path raises an exception with a precise description of what went wrong.
 
-Three full-architecture runs with different RL hyperparameters:
+### Log Every Step
 
-| Run Name | LR | epsilon_decay | correct_smell | missed_smell |
-|----------|----|--------------|--------------|--------------|
-| `phase1_slow_explorer` | 0.0005 | 250,000 | +2.0 | -1.0 |
-| `phase1_cautious_learner` | 0.0001 | 150,000 | default | default |
-| `phase1_strict_evaluator` | 0.0005 | 150,000 | +2.0 | -3.0 |
+Every stage transition, epoch, episode, reward, cache event, and metric is logged at INFO level.
 
-Winner = highest validation Macro F1 -> hyperparameters inherited by Phase 2.
+### Remove Dead Code
 
-### Phase 2: Component Ablations
-
-| Ablation | GCN Type | Semantic | Description |
-|----------|----------|----------|-------------|
-| `ablate_semantic` | Full 2-layer | **Disabled** | x[:, 15:] zeroed -> struct-only fusion |
-| `ablate_structure` | **1-layer GCN** | Enabled | Shallow graph, 1-hop only |
-| `ablate_traditional` | **1-layer GCN** | **Disabled** | Struct-only + shallow graph |
-
-### Ablation Modules
-
-**`AblatedDataset`** — zeroes semantic dims (does NOT slice):
-
-```python
-item["x"] = item["x"].clone()
-item["x"][:, NodeFeatureFusion.STRUCT_DIM:] = 0.0
-# sem_proj(zeros) ~ bias-only => near-zero semantic output
-```
-
-**`OneLayerGCN`** — 1-layer message passing + mean pooling. `conv1` set to `GCNLayer(FUSED_DIM, out_ch)` since fusion is inherited from `GCNEncoder`.
-
-**`IdentityGCN`** — Applies fusion then operates on class node only (no message passing):
-
-```python
-def forward(self, x, edge_index):
-    x = self.fusion(x)        # fusion still applied
-    h = x[0:1]                # class node only
-    h = F.relu(self.conv1.linear(h))
-    h = self.conv2.linear(h)
-    return h
-```
-
----
-
-## 14. Experimental Results
-
-### Baseline Comparison (Phase 1 Slow Explorer, with Embeddings)
-
-| Method | Accuracy | Macro F1 | Macro Precision | Macro Recall |
-|--------|----------|----------|----------------|--------------|
-| Random Agent | 0.1998 | 0.1791 | 0.1976 | 0.2013 |
-| Rule-Based (Designite-like) | 0.3687 | 0.1555 | 0.1398 | 0.1912 |
-| SVM + CK Metrics | 0.5023 | 0.1337 | 0.1005 | 0.2000 |
-| **SmellRL (Ours)** | **0.5034** | **0.4585** | **0.4493** | **0.5079** |
-
-### Per-Class F1 Breakdown
-
-| Smell Type | SmellRL F1 | Rule-Based F1 | Delta |
-|------------|-----------|--------------|-------|
-| GodClass    | 0.4717    | 0.0000       | +0.4717 |
-| FeatureEnvy | 0.2013    | 0.0000       | +0.2013 |
-| LongMethod  | 0.5236    | 0.0000       | +0.5236 |
-| DataClass   | 0.5374    | 0.1788       | +0.3586 |
-| NoSmell     | 0.5586    | 0.5989       | -0.0403 |
-
-### SmellRL Confusion Matrix (Test Set)
-
-|              | GodClass | FeatureEnvy | LongMethod | DataClass | NoSmell |
-|--------------|----------|------------|-----------|----------|--------|
-| **GodClass** | 75 | 1  | 2  | 36 | 17  |
-| **FeatureEnvy** | 0 | 15 | 29 | 1  | 13  |
-| **LongMethod**  | 2 | 32 | 61 | 0  | 5   |
-| **DataClass**   | 27 | 0 | 0  | 97 | 23  |
-| **NoSmell**     | 83 | 43 | 41 | 80 | 193 |
-
----
-
-## 15. Architecture Justification & Design Decisions
-
-### Why NodeFeatureFusion with 3:1 structural priority?
-
-The raw 783-dim vector has 98.1% semantic content. Without fusion, `GCNLayer`'s `nn.Linear(783, 128)` effectively discards the 15 structural dimensions since their gradient signal is proportionally negligible. NodeFeatureFusion solves this by:
-1. Giving structural features a 2-layer MLP to learn non-linear interactions (WMC x data-usage = FeatureEnvy distinction)
-2. Compressing GraphCodeBERT's 768-dim to a compact 32-dim slot (rich pre-training; compression suffices)
-3. Achieving a 3:1 capacity ratio (96:32) reflecting that hand-crafted structural metrics are more directly diagnostic of smell types than general semantic code embeddings
-
-### Why graph-based representation instead of sequence models?
-
-Java classes have a fundamentally graph-structured form: methods call other methods, methods access fields. A GCN can propagate information along `CALLS` edges — a short method that delegates to many long ones can still be detected as contributing to LongMethod complexity. Flat-sequence BERT models lose these structural relationships entirely.
-
-### Why pre-train the GCN before RL?
-
-RL is sample-inefficient — learning both a graph representation AND an optimal policy simultaneously from sparse reward with ~1,000-3,000 examples is extremely difficult. GCN pre-training with dense cross-entropy supervision gives the encoder a warm start in a semantically meaningful embedding space. The RL phase then only fine-tunes the decision boundary.
-
-### Why DQN instead of supervised learning throughout?
-
-1. **Asymmetric cost modeling:** The `missed_smell=-2.0` >> `false_alarm=-0.5` reward encodes domain knowledge that cross-entropy loss cannot express without manual class weights.
-2. **Extensibility:** DQN naturally extends to multi-step sequential refactoring decisions (observe smell -> select pattern -> observe quality metric improvement).
-3. **Class imbalance handling:** Inverse-frequency reward scaling naturally addresses class imbalance without manual loss weight tuning.
-
-### Why gamma=0 (Contextual Bandit)?
-
-Each code sample is i.i.d. — there is no temporal dependency between classifying one code unit and the next. `gamma=0` makes `Q*(s,a) = r(s,a)`, equivalent to a contextual bandit. The full DQN machinery (target network, replay buffer) is maintained for future multi-step extensions.
-
-### Why fail-loud instead of silent fallbacks?
-
-Three specific fallbacks were removed from the codebase:
-1. **`transformers` ImportError** (`src/embeddings.py`): Previously silently fell back to hash-based synthetic embeddings. Now raises `ImportError`. A missing dependency must be resolved explicitly.
-2. **`NodeFeatureFusion` size mismatch** (`src/models.py`): Previously zero-padded silently. Now raises `ValueError`. A shape mismatch indicates a pipeline bug.
-3. **`is_graph_virtual()`** (`scripts/run_ablations.py`): Removed entirely. Virtual graphs were a relic of an older pipeline design where AST parsing failures generated fallback graphs. Since all rows now fail loudly at parse validation, virtual graphs cannot exist.
+Deleted elements: `SupervisedTrainer`, `SupervisedSmellDetector`, `SyntheticEmbedder`, legacy homogeneous `GCNEncoder`, and Phase 3 sweeps.
 
 ---
 
@@ -652,94 +568,65 @@ Three specific fallbacks were removed from the codebase:
 ```
 SmellRL/
 ├── main.py                        # Pipeline entry point (4 stages)
-├── config.yaml                    # All hyperparameters and paths
-├── requirements.txt               # Python dependencies
-├── README.md                      # Quick-start guide
+├── config.yaml                    # All hyperparameters
+├── requirements.txt
 ├── Project_info.md                # This document
 │
 ├── src/
-│   ├── data.py        # MLCQ loading, AST parsing, graph builder, SmellDataset
-│   ├── embeddings.py  # GraphCodeBERT wrapper + SyntheticEmbedder (ablation only)
-│   ├── models.py      # NodeFeatureFusion, GCNLayer, GCNEncoder, DQNClassifier, SmellDetectionAgent
-│   ├── training.py    # ReplayBuffer, GCNPretrainer, DQNTrainer
-│   ├── evaluation.py  # RandomAgent, RuleBasedAgent (fixed n_m/n_f), SVMAgent, ExperimentRunner
-│   └── utils.py       # setup_logger, get_device, CheckpointManager
+│   ├── data.py          # load_smellycode(), AST graph builder, SmellDataset
+│   ├── embeddings.py    # SemanticEmbedder (GraphCodeBERT, no fallback)
+│   ├── environment.py   # apply_simulated_refactoring(), quality_delta_reward(),
+│   │                    # SOFT_REWARD_MATRIX, TRANSITIONS
+│   ├── models.py        # NodeFeatureFusion, RGATLayer, RGATEncoder,
+│   │                    # DQNClassifier, SmellDetectionAgent
+│   ├── training.py      # ReplayBuffer, GCNPretrainer, DQNTrainer (PRIMARY)
+│   ├── evaluation.py    # RandomAgent, RuleBasedAgent, SVMAgent,
+│   │                    # ExperimentRunner, cross_dataset_eval()
+│   └── utils.py         # setup_logger, get_device, CheckpointManager
 │
 ├── scripts/
-│   ├── code_download.py     # Dataset download utility
-│   └── run_ablations.py     # 2-phase ablation runner
-│                            # AblatedDataset (zero-out, not slice)
-│                            # OneLayerGCN, IdentityGCN
-│
-├── diagrams/
-│   ├── data_pipeline&feature_extract.html   # Stage 0-2 pipeline (no fallback arrows)
-│   ├── graph_encoder.html                   # GCN encoder with NodeFeatureFusion
-│   ├── rl_decision_agent.html               # DQN agent with reward table
-│   └── overall_architecture.html            # 5-phase end-to-end overview
-│
-├── data/
-│   ├── mlcq/                # Raw MLCQ CSV
-│   ├── processed/           # Serialized .pt graph files (783-dim node features)
-│   │   └── embeddings_cache/    # GraphCodeBERT .npy MD5-keyed cache
-│   └── results/             # Evaluation CSVs and JSON outputs
-│
-└── checkpoints/             # Model checkpoints
-    ├── gcn_pretrain_latest.pt   # GCN encoder after supervised pre-training
-    └── smellrl_latest.pt        # Full agent (GCN+NodeFeatureFusion+DQN)
+│   ├── download_smellycode.py   # Figshare download
+│   ├── cross_validate_mlcq.py  # MLCQ generalization evaluation (standalone)
+│   └── run_ablations.py        # Core ablation suite (4 runs)
 ```
 
 ---
 
 ## 17. Dependencies
 
-| Package | Min Version | Role |
-|---------|------------|------|
-| `torch` | >=2.0.0 | Tensor ops, GCN/DQN implementation, autograd |
-| `transformers` | >=4.30.0 | GraphCodeBERT tokenizer + model |
-| `numpy` | >=1.24.0 | Array ops, SyntheticEmbedder |
-| `pandas` | >=1.5.0 | MLCQ CSV loading |
-| `scikit-learn` | >=1.2.0 | Stratified splits, SVM baseline, metrics |
-| `pyyaml` | >=6.0 | Config loading |
-| `javalang` | >=0.13.0 | Java AST parsing |
-| `matplotlib` | >=3.7.0 | Plotting |
-| `seaborn` | >=0.12.0 | Statistical plotting |
-| `tqdm` | >=4.65.0 | Progress bars |
-| `scipy` | >=1.10.0 | Statistical testing |
+*   `torch >= 2.0.0`
+*   `transformers >= 4.30.0`
+*   `numpy >= 1.24.0`
+*   `pandas >= 1.5.0`
+*   `scikit-learn >= 1.2.0`
+*   `pyyaml >= 6.0`
+*   `javalang >= 0.13.0`
+*   `scipy >= 1.10.0`
 
 ---
 
-## 18. Reproducibility & Resumability
+## 18. Reproducibility & Execution Order
 
-### Seeds
+### Reproducibility Settings
+- `random_seed=42` for all stratified splits.
+- Wilcoxon signed-rank test (paired, non-parametric) p-values reported for final comparative results.
 
-- `random_seed=42` for all dataset splits (stratified by `smell_idx`)
-- `SyntheticEmbedder` uses SHA-256 -> seed -> `np.random.RandomState` for deterministic ablation embeddings
+### Execution Order
 
-### Checkpoint System
-
-Every stage saves checkpoints via `CheckpointManager`:
-- Full `state_dict()` of all models (GCN + NodeFeatureFusion + DQN)
-- Optimizer state, epsilon value, training history
-
-Re-running any command resumes from the latest checkpoint:
 ```bash
-python main.py                      # resumes all stages
-python main.py --stage pretrain     # GCN supervised pre-training only
-python main.py --stage train        # DQN RL training only
-python main.py --stage experiment   # evaluation only
-python scripts/run_ablations.py     # 2-phase ablation (isolated checkpoints per run)
-python scripts/run_ablations.py --test  # dry-run with tiny slice
+python scripts/download_smellycode.py           # download SmellyCode++
+python main.py --stage preprocess               # build graphs + cache .pt
+python scripts/run_ablations.py                 # run 4 core ablation configurations
+python scripts/cross_validate_mlcq.py           # MLCQ generalization check
 ```
 
-### 3-Layer Data Caching
+### Compute Budget (RTX 3050 GPU)
 
-1. `load_mlcq()` caches parseable rows to `<csv>_parseable.csv`
-2. `run_preprocessing()` checks for existing `train.pt / val.pt / test.pt`
-3. `SemanticEmbedder.embed_identifier()` checks `embeddings_cache/<md5>.npy`
-
-After the first full run, all subsequent runs (including all ablation sweeps) reuse all cached data.
+- **Pre-training (40 epochs)**: **~50 seconds**
+- **DQN training (30 episodes)**: **~20 to 25 minutes**
+- **Core Ablation Suite (4 runs)**: **~1.5 to 2 hours** (total execution time)
 
 ---
 
-*Document reflects SmellRL implementation as of July 2026.*
-*Sources: src/data.py, src/models.py, src/training.py, src/evaluation.py, src/embeddings.py, scripts/run_ablations.py, config.yaml*
+*Document reflects SmellRL v3 as of July 2026.*  
+*Sources: src/data.py, src/environment.py, src/models.py, src/training.py, src/evaluation.py, scripts/run_ablations.py, config.yaml*
